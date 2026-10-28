@@ -51,6 +51,21 @@ class WebtoonRecyclerView @JvmOverloads constructor(
 
     // KMK -->
     var pinchToZoom = true
+
+    var swipeNavigationEnabled = true
+        set(value) {
+            field = value
+            if (!value) {
+                stopScroll()
+                isManuallyScrolling = false
+                tapDuringManualScroll = false
+            }
+        }
+
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+        if (!swipeNavigationEnabled) return false
+        return super.onInterceptTouchEvent(e)
+    }
     // KMK <--
 
     var tapListener: ((MotionEvent) -> Unit)? = null
@@ -75,6 +90,9 @@ class WebtoonRecyclerView @JvmOverloads constructor(
         }
 
         detector.onTouchEvent(e)
+        // KMK -->
+        if (!swipeNavigationEnabled && e.actionMasked != MotionEvent.ACTION_CANCEL) return true
+        // KMK <--
         return super.onTouchEvent(e)
     }
 
@@ -159,7 +177,9 @@ class WebtoonRecyclerView @JvmOverloads constructor(
             translationXAnimator.addUpdateListener { animation -> x = getPositionX(animation.animatedValue as Float) }
             animatorSet.play(translationXAnimator)
         }
-        if (velocityY != 0 && (atFirstPosition || atLastPosition)) {
+        // KMK -->
+        if (velocityY != 0 && (atFirstPosition || atLastPosition || !swipeNavigationEnabled)) {
+            // KMK <--
             val dy = (distanceTimeFactor * velocityY / 2)
             val newY = getPositionY(y + dy)
             val translationYAnimator = ValueAnimator.ofFloat(y, newY)
@@ -314,7 +334,9 @@ class WebtoonRecyclerView @JvmOverloads constructor(
                     val x = (ev.getX(index) + 0.5f).toInt()
                     val y = (ev.getY(index) + 0.5f).toInt()
                     var dx = x - downX
-                    var dy = if (atFirstPosition || atLastPosition) y - downY else 0
+                    // KMK -->
+                    var dy = if (atFirstPosition || atLastPosition || !swipeNavigationEnabled) y - downY else 0
+                    // KMK <--
 
                     if (!isZoomDragging && currentScale > 1f) {
                         var startScroll = false

@@ -45,11 +45,17 @@ fun TabbedDialog(
     modifier: Modifier = Modifier,
     tabOverflowMenuContent: (@Composable ColumnScope.(() -> Unit) -> Unit)? = null,
     pagerState: PagerState = rememberPagerState { tabTitles.size },
+    // KMK -->
+    avoidHinge: Boolean = false,
+    // KMK <--
     content: @Composable (Int) -> Unit,
 ) {
     AdaptiveSheet(
         modifier = modifier,
         onDismissRequest = onDismissRequest,
+        // KMK -->
+        avoidHinge = avoidHinge,
+        // KMK <--
     ) {
         val scope = rememberCoroutineScope()
 

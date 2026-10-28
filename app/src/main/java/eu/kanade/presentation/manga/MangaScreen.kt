@@ -1,5 +1,6 @@
 package eu.kanade.presentation.manga
 
+// KMK -->
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -83,7 +84,11 @@ import eu.kanade.presentation.manga.components.PagePreviewItems
 import eu.kanade.presentation.manga.components.PagePreviews
 import eu.kanade.presentation.manga.components.RelatedMangasRow
 import eu.kanade.presentation.manga.components.SearchMetadataChips
+import eu.kanade.presentation.util.HingeAwareEndPane
+import eu.kanade.presentation.util.HingeAwareTwoPaneLayout
+import eu.kanade.presentation.util.VerticalWindowHinge
 import eu.kanade.presentation.util.formatChapterNumber
+import eu.kanade.presentation.util.rememberVerticalWindowHinge
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.getNameForMangaInfo
@@ -118,7 +123,6 @@ import tachiyomi.domain.manga.model.MangaCover
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
-import tachiyomi.presentation.core.components.TwoPanelBox
 import tachiyomi.presentation.core.components.VerticalFastScroller
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -133,6 +137,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import kotlin.math.roundToInt
+// KMK <--
 
 @Composable
 fun MangaScreen(
@@ -217,7 +222,10 @@ fun MangaScreen(
         }
     }
 
-    if (!isTabletUi) {
+    // KMK -->
+    val hinge = rememberVerticalWindowHinge()
+    if (!isTabletUi && hinge == null) {
+        // KMK <--
         MangaScreenSmallImpl(
             state = state,
             snackbarHostState = snackbarHostState,
@@ -281,6 +289,9 @@ fun MangaScreen(
         )
     } else {
         MangaScreenLargeImpl(
+            // KMK -->
+            hinge = hinge,
+            // KMK <--
             state = state,
             snackbarHostState = snackbarHostState,
             chapterSwipeStartAction = chapterSwipeStartAction,
@@ -806,6 +817,9 @@ private fun MangaScreenSmallImpl(
 
 @Composable
 private fun MangaScreenLargeImpl(
+    // KMK -->
+    hinge: VerticalWindowHinge?,
+    // KMK <--
     state: MangaScreenModel.State.Success,
     snackbarHostState: SnackbarHostState,
     nextUpdate: Instant?,
@@ -962,10 +976,9 @@ private fun MangaScreenLargeImpl(
             )
         },
         bottomBar = {
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.BottomEnd,
-            ) {
+            // KMK -->
+            HingeAwareEndPane(hinge) {
+                // KMK <--
                 val selectedChapters = remember(chapters) {
                     chapters.filter { it.selected }
                 }
@@ -976,7 +989,9 @@ private fun MangaScreenLargeImpl(
                     onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                     onDownloadChapter = onDownloadChapter,
                     onMultiDeleteClicked = onMultiDeleteClicked,
-                    fillFraction = 0.5f,
+                    // KMK -->
+                    fillFraction = 1f,
+                    // KMK <--
                 )
             }
         },
@@ -1054,7 +1069,10 @@ private fun MangaScreenLargeImpl(
                 end = insetPadding.calculateEndPadding(layoutDirection),
             ),
         ) {
-            TwoPanelBox(
+            // KMK -->
+            HingeAwareTwoPaneLayout(
+                hinge = hinge,
+                // KMK <--
                 modifier = Modifier.padding(
                     start = contentPadding.calculateStartPadding(layoutDirection),
                     end = contentPadding.calculateEndPadding(layoutDirection),

@@ -70,6 +70,9 @@ fun ChapterSettingsDialog(
 
     TabbedDialog(
         onDismissRequest = onDismissRequest,
+        // KMK -->
+        avoidHinge = true,
+        // KMK <--
         tabTitles = persistentListOf(
             stringResource(MR.strings.action_filter),
             stringResource(MR.strings.action_sort),

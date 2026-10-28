@@ -28,6 +28,10 @@ open class Pager(
      */
     var longTapListener: ((MotionEvent) -> Boolean)? = null
 
+    // KMK -->
+    var swipeNavigationEnabled = true
+    // KMK <--
+
     // SY -->
     var isRestoring = false
 
@@ -83,6 +87,9 @@ open class Pager(
      * views manipulate [requestDisallowInterceptTouchEvent].
      */
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        // KMK -->
+        if (!swipeNavigationEnabled) return false
+        // KMK <--
         return try {
             super.onInterceptTouchEvent(ev)
         } catch (e: IllegalArgumentException) {
@@ -95,6 +102,10 @@ open class Pager(
      * [requestDisallowInterceptTouchEvent].
      */
     override fun onTouchEvent(ev: MotionEvent): Boolean {
+        // KMK -->
+        // Child image views still receive pan/zoom, and dispatchTouchEvent still detects taps.
+        if (!swipeNavigationEnabled && ev.actionMasked != MotionEvent.ACTION_CANCEL) return true
+        // KMK <--
         return try {
             super.onTouchEvent(ev)
         } catch (e: NullPointerException) {

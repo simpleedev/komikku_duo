@@ -99,6 +99,10 @@ class WebtoonViewer(
             .threshold
 
     init {
+        // KMK -->
+        recycler.swipeNavigationEnabled = config.swipeNavigationEnabled
+        config.swipeNavigationChangedListener = { recycler.swipeNavigationEnabled = it }
+        // KMK <--
         recycler.setItemViewCacheSize(RECYCLER_VIEW_CACHE_SIZE)
         recycler.isVisible = false // Don't let the recycler layout yet
         recycler.layoutParams = ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)

@@ -169,6 +169,7 @@ class PagerViewerAdapter(
                 viewer,
                 item,
                 // KMK -->
+                openingPage = item2 as? ReaderPage,
                 seedColor = seedColor,
                 // KMK <--
             )
@@ -180,6 +181,15 @@ class PagerViewerAdapter(
      * Returns the current position of the given [view] on the adapter.
      */
     override fun getItemPosition(view: Any): Int {
+        // KMK -->
+        // An unpaired (page, null) keeps its identity when switching layouts, but needs a fresh viewport.
+        if (view is PagerPageHolder && view.sideBySideAtCreation != viewer.sideBySide) return POSITION_NONE
+        if (view is PagerTransitionHolder && view.sideBySideAtCreation != viewer.sideBySide) return POSITION_NONE
+        if (view is PagerTransitionHolder) {
+            val position = joinedItems.indexOfFirst { it.sameReaderSpread(view.item) }
+            return position.takeIf { it >= 0 } ?: POSITION_NONE
+        }
+        // KMK <--
         if (view is PositionableView) {
             val position = joinedItems.indexOf(view.item)
             if (position != -1) {
@@ -249,94 +259,14 @@ class PagerViewerAdapter(
                 joinedItems.reverse()
             }
         } else {
-            val pagedItems = mutableListOf<MutableList<ReaderPage?>>()
-            val otherItems = mutableListOf<ReaderItem>()
-            pagedItems.add(mutableListOf())
-
-            // Step 1: segment the pages and transition pages
-            subItems.forEach { readerItem ->
-                when (readerItem) {
-                    is ReaderPage -> {
-                        if (pagedItems.last().isNotEmpty() &&
-                            pagedItems.last().last()?.chapter?.chapter?.id != readerItem.chapter.chapter.id
-                        ) {
-                            pagedItems.add(mutableListOf())
-                        }
-                        pagedItems.last().add(readerItem)
-                    }
-                    is ChapterTransition -> {
-                        otherItems.add(readerItem)
-                        pagedItems.add(mutableListOf())
-                    }
-                }
-            }
-
-            val subJoinedItems = mutableListOf<Pair<ReaderItem, ReaderItem?>>()
-
-            // Step 2: run through each set of pages
-            pagedItems.forEach { items ->
-                items.forEach { it?.shiftedPage = false }
-
-                // Step 3: If pages have been shifted,
-                if (viewer.config.shiftDoublePage) {
-                    val index = items.indexOf(pageToShift)
-                    // Go from the current page and work your way back to the first page,
-                    // or the first page that's a full page.
-                    // This is done in case user tries to shift a page after a full page
-                    val fullPageBeforeIndex = if (index > -1) {
-                        items.take(index).indexOfLast { it?.fullPage == true }
-                    } else {
-                        -1
-                    }.coerceAtLeast(0)
-
-                    // Add a shifted page to the first place there isnt a full page
-                    run loop@{
-                        (fullPageBeforeIndex until items.size).forEach {
-                            if (items[it]?.fullPage == false) {
-                                items[it]?.shiftedPage = true
-                                return@loop
-                            }
-                        }
-                    }
-                }
-
-                // Step 4: Add blanks for chunking
-                var itemIndex = 0
-                while (itemIndex < items.size) {
-                    val currentItem = items[itemIndex]
-                    currentItem?.isolatedPage = false
-                    if (currentItem?.fullPage == true || currentItem?.shiftedPage == true) {
-                        // Add a 'blank' page after each full page. It will be used when chunked to solo a page
-                        items.add(itemIndex + 1, null)
-                        if (
-                            currentItem.fullPage &&
-                            itemIndex > 0 &&
-                            items[itemIndex - 1] != null &&
-                            (itemIndex - 1) % 2 == 0
-                        ) {
-                            // If a page is a full page, check if the previous page needs to be isolated
-                            // we should check if it's an even or odd page, since even pages need shifting
-                            // For example if Page 1 is full, Page 0 needs to be isolated
-                            // No need to take account shifted pages, because null additions should
-                            // always have an odd index in the list
-                            items[itemIndex - 1]?.isolatedPage = true
-                            items.add(itemIndex, null)
-                            itemIndex++
-                        }
-                        itemIndex++
-                    }
-                    itemIndex++
-                }
-
-                // Step 5: chunk em
-                if (items.isNotEmpty()) {
-                    subJoinedItems.addAll(items.chunked(2).map { Pair(it.first()!!, it.getOrNull(1)) })
-                }
-
-                otherItems.getOrNull(pagedItems.indexOf(items))?.let {
-                    subJoinedItems.add(Pair(it, null))
-                }
-            }
+            // KMK -->
+            val subJoinedItems = joinReaderChapterSpreads(
+                subItems,
+                viewer.sideBySide,
+                viewer.config.shiftDoublePage,
+                pageToShift,
+            )
+            // KMK <--
 
             if (viewer is R2LPagerViewer) {
                 subJoinedItems.reverse()
@@ -357,26 +287,15 @@ class PagerViewerAdapter(
                 (oldCurrent.second as? ChapterTransition)?.from != currentChapter ->
                 subItems.find { it is ReaderPage && it.chapter == currentChapter }
             useSecondPage -> oldCurrent?.second ?: oldCurrent?.first
-            else -> oldCurrent?.first ?: return
+            // KMK -->
+            else -> oldCurrent?.readingPage ?: oldCurrent?.first ?: return
+            // KMK <--
         }
 
-        val index = when {
-            newPage is ChapterTransition && joinedItems.none { it.first == newPage || it.second == newPage } -> {
-                val filteredPages = joinedItems.filter {
-                    it.first is ReaderPage &&
-                        (it.first as ReaderPage).chapter == newPage.to
-                }
-                val page = if (newPage is ChapterTransition.Next) {
-                    filteredPages.minByOrNull { (it.first as ReaderPage).index }?.first
-                } else {
-                    filteredPages.maxByOrNull { (it.first as ReaderPage).index }?.first
-                }
-                joinedItems.indexOfFirst { it.first == page || it.second == page }
-            }
-            else -> joinedItems.indexOfFirst { it.first == newPage || it.second == newPage }
-        }
-
-        viewer.pager.setCurrentItem(index, false)
+        // KMK -->
+        val index = joinedItems.readerSpreadPosition(newPage)
+        if (index >= 0) viewer.pager.setCurrentItem(index, false)
+        // KMK <--
     }
 
     fun splitDoublePages(current: ReaderPage) {

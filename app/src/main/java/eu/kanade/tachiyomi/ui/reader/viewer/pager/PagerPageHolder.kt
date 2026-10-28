@@ -1,9 +1,15 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+// KMK -->
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.drawable.Drawable
+import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.annotation.ColorInt
 import androidx.core.view.isVisible
 import eu.kanade.presentation.util.formattedMessage
@@ -15,12 +21,16 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import okio.Buffer
 import okio.BufferedSource
@@ -33,6 +43,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.decoder.ImageDecoder
 import tachiyomi.i18n.MR
 import kotlin.math.max
+// KMK <--
 
 /**
  * View of the ViewPager that contains a page of a chapter.
@@ -45,6 +56,7 @@ class PagerPageHolder(
     private var extraPage: ReaderPage? = null,
     // KMK -->
     @ColorInt private val seedColor: Int? = null,
+    private val inTransition: Boolean = false,
     // KMK <--
 ) : ReaderPageImageView(readerThemedContext), ViewPagerAdapter.PositionableView {
 
@@ -76,6 +88,114 @@ class PagerPageHolder(
      */
     private var extraLoadJob: Job? = null
 
+    // KMK -->
+    val sideBySideAtCreation = viewer.sideBySide
+    private val imageLoadMutex = Mutex()
+    private val useHingeViewports = sideBySideAtCreation && !inTransition && viewer.hinge != null
+    private var secondImageView: ReaderPageImageView? = null
+    private var portraitPage = false
+    private var navigateSecondImage = false
+
+    internal val indicatorPosition: UnpairedPagePosition
+        get() = ReaderSpreadLayout.unpairedPosition(
+            viewer.config.unpairedPagePosition,
+            viewer.sideBySide && !inTransition,
+            portraitPage,
+            viewer is R2LPagerViewer,
+            viewer.config.invertDoublePages,
+            openingPage = page.index == 0,
+        )
+
+    val navigationImage: ReaderPageImageView
+        get() = secondImageView?.takeIf { navigateSecondImage } ?: this
+
+    private data class LoadedImages(
+        val source: BufferedSource,
+        val animated: Boolean,
+        val background: Drawable?,
+        val portrait: Boolean,
+        val second: BufferedSource?,
+    )
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        layoutImages()
+    }
+
+    @SuppressLint("RtlHardcoded") // Left and Right name physical displays, including in RTL interface languages.
+    private fun layoutImages() {
+        if (width <= 0) return
+        val sideBySide = viewer.sideBySide && !inTransition
+        val hinge = viewer.hinge?.relativeTo(0, 0, width, height).takeIf { sideBySide }
+        val firstOnLeft = ReaderSpreadLayout.firstPageOnLeft(viewer is R2LPagerViewer, viewer.config.invertDoublePages)
+        val position = if (secondImageView != null) {
+            if (firstOnLeft) UnpairedPagePosition.LEFT else UnpairedPagePosition.RIGHT
+        } else {
+            ReaderSpreadLayout.unpairedPosition(
+                viewer.config.unpairedPagePosition,
+                sideBySide,
+                portraitPage,
+                viewer is R2LPagerViewer,
+                viewer.config.invertDoublePages,
+                openingPage = page.index == 0,
+            )
+        }
+        val viewport = ReaderSpreadLayout.viewport(width, position, hinge)
+        setImageViewport(
+            viewport.takeIf { sideBySide },
+            hinge.takeIf { position == UnpairedPagePosition.CENTER },
+        )
+        secondImageView?.let { second ->
+            val other = ReaderSpreadLayout.viewport(
+                width,
+                if (firstOnLeft) UnpairedPagePosition.RIGHT else UnpairedPagePosition.LEFT,
+                hinge,
+            )
+            second.layoutParams = LayoutParams(other.width, MATCH_PARENT).apply {
+                leftMargin = other.left
+                gravity = Gravity.TOP or Gravity.LEFT
+            }
+        }
+        viewer.updatePageNumbers()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            navigateSecondImage = secondImageView?.let { event.x >= it.left && event.x < it.right } == true
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun onPageSelected(forward: Boolean) {
+        super.onPageSelected(forward)
+        secondImageView?.onPageSelected(forward)
+    }
+
+    /** Read native decoder metadata, including formats unsupported by BitmapFactory, without a bitmap. */
+    private fun isPortrait(source: BufferedSource): Boolean = try {
+        source.peek().use { peek ->
+            if (ImageUtil.isAnimatedAndSupported(source)) {
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeStream(peek.inputStream(), null, options)
+                ReaderSpreadLayout.isPortrait(options.outWidth, options.outHeight)
+            } else {
+                val decoder = ImageDecoder.newInstance(peek.inputStream())
+                if (decoder == null) {
+                    false
+                } else {
+                    try {
+                        ReaderSpreadLayout.isPortrait(decoder.width, decoder.height)
+                    } finally {
+                        decoder.recycle()
+                    }
+                }
+            }
+        }
+    } catch (_: Exception) {
+        false // Let the existing image view handle unknown formats and decode errors.
+    }
+    // KMK <--
+
     init {
         loadJob = scope.launch { loadPageAndProcessStatus(1) }
         // SY -->
@@ -88,10 +208,21 @@ class PagerPageHolder(
      */
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        // KMK -->
+        dispose()
+    }
+
+    internal fun dispose() {
+        // KMK <--
         loadJob?.cancel()
         loadJob = null
         extraLoadJob?.cancel()
         extraLoadJob = null
+        // KMK -->
+        scope.cancel()
+        recycle()
+        secondImageView?.recycle()
+        // KMK <--
     }
 
     private fun initProgressIndicator() {
@@ -170,7 +301,11 @@ class PagerPageHolder(
     /**
      * Called when the page is ready.
      */
-    private suspend fun setImage() {
+    // KMK -->
+    private suspend fun setImage() = imageLoadMutex.withLock { loadImages() }
+
+    private suspend fun loadImages() {
+        // KMK <--
         if (extraPage == null) {
             progressIndicator?.setProgress(0)
         } else {
@@ -179,9 +314,14 @@ class PagerPageHolder(
 
         val streamFn = page.stream ?: return
         val streamFn2 = extraPage?.stream
+        // KMK -->
+        if (extraPage != null && streamFn2 == null) return
+        // KMK <--
 
         try {
-            val (source, isAnimated, background) = withIOContext {
+            // KMK -->
+            val images = withIOContext {
+                // KMK <--
                 streamFn().buffered(16).use { source ->
                     // SY -->
                     if (extraPage != null) {
@@ -190,11 +330,28 @@ class PagerPageHolder(
                     } else {
                         null
                     }.use { source2 ->
-                        val itemSource = if (viewer.config.dualPageSplit) {
-                            process(item.first, Buffer().readFrom(source))
-                        } else {
-                            mergePages(Buffer().readFrom(source), source2?.let { Buffer().readFrom(it) })
+                        // KMK -->
+                        val first = Buffer().readFrom(source)
+                        val second = source2?.let { Buffer().readFrom(it) }
+                        var retainedSecond: BufferedSource? = null
+                        val itemSource = try {
+                            if (inTransition) {
+                                first // The opening uses the complete original image inside the left pane.
+                            } else if (useHingeViewports && second != null && !page.fullPage &&
+                                !ImageUtil.isAnimatedAndSupported(first) &&
+                                !ImageUtil.isAnimatedAndSupported(second) && isPortrait(first) && isPortrait(second)
+                            ) {
+                                retainedSecond = second
+                                first
+                            } else if (viewer.config.dualPageSplit) {
+                                process(item.first, first)
+                            } else {
+                                mergePages(first, second)
+                            }
+                        } finally {
+                            if (retainedSecond == null) second?.close()
                         }
+                        // KMK <--
                         // SY <--
                         val isAnimated = ImageUtil.isAnimatedAndSupported(itemSource)
                         val background = if (!isAnimated && viewer.config.automaticBackground) {
@@ -202,11 +359,34 @@ class PagerPageHolder(
                         } else {
                             null
                         }
-                        Triple(itemSource, isAnimated, background)
+                        // KMK -->
+                        LoadedImages(
+                            itemSource,
+                            isAnimated,
+                            background,
+                            viewer.sideBySide && (second == null || itemSource === first) && isPortrait(itemSource),
+                            retainedSecond,
+                        )
+                        // KMK <--
                     }
                 }
             }
             withUIContext {
+                // KMK -->
+                val (source, isAnimated, background, portrait, second) = images
+                portraitPage = portrait
+                secondImageView?.let {
+                    it.recycle()
+                    removeView(it)
+                }
+                secondImageView = second?.let {
+                    ReaderPageImageView(context).apply {
+                        onImageLoadError = { error -> setError(error) }
+                        onScaleChanged = { viewer.activity.hideMenu() }
+                    }.also { addView(it) }
+                }
+                layoutImages()
+                // KMK <--
                 setImage(
                     source,
                     isAnimated,
@@ -223,11 +403,31 @@ class PagerPageHolder(
                         // KMK <--
                     ),
                 )
+                // KMK -->
+                if (second != null) {
+                    secondImageView?.setImage(
+                        second,
+                        false,
+                        Config(
+                            zoomDuration = viewer.config.doubleTapAnimDuration,
+                            minimumScaleType = viewer.config.imageScaleType,
+                            cropBorders = viewer.config.imageCropBorders,
+                            zoomStartPosition = viewer.config.imageZoomType,
+                            disableZoomIn = viewer.config.disableZoomIn,
+                            doubleTapZoom = viewer.config.doubleTapZoom,
+                        ),
+                    )
+                }
+                // KMK <--
                 if (!isAnimated) {
                     pageBackground = background
                 }
                 removeErrorLayout()
             }
+            // KMK -->
+        } catch (e: CancellationException) {
+            throw e
+            // KMK <--
         } catch (e: Throwable) {
             logcat(LogPriority.ERROR, e)
             withUIContext {
@@ -298,6 +498,9 @@ class PagerPageHolder(
 
         scope.launch { progressIndicator?.setProgress(96) }
         if (imageBitmap.height < imageBitmap.width) {
+            // KMK -->
+            imageBitmap.recycle()
+            // KMK <--
             imageSource2.close()
             page.fullPage = true
             splitDoublePages()
@@ -306,6 +509,9 @@ class PagerPageHolder(
 
         val imageBitmap2 = decodeImage(imageSource2)
         if (imageBitmap2 == null) {
+            // KMK -->
+            imageBitmap.recycle()
+            // KMK <--
             imageSource2.close()
             extraPage?.fullPage = true
             page.isolatedPage = true
@@ -316,6 +522,10 @@ class PagerPageHolder(
 
         scope.launch { progressIndicator?.setProgress(97) }
         if (imageBitmap2.height < imageBitmap2.width) {
+            // KMK -->
+            imageBitmap.recycle()
+            imageBitmap2.recycle()
+            // KMK <--
             imageSource2.close()
             extraPage?.fullPage = true
             page.isolatedPage = true
@@ -329,13 +539,23 @@ class PagerPageHolder(
         imageSource.close()
         imageSource2.close()
 
-        return ImageUtil.mergeBitmaps(imageBitmap, imageBitmap2, isLTR, centerMargin, viewer.config.pageCanvasColor) {
-            updateProgress(it)
+        // KMK -->
+        return try {
+            ImageUtil.mergeBitmaps(imageBitmap, imageBitmap2, isLTR, centerMargin, viewer.config.pageCanvasColor) {
+                updateProgress(it)
+            }
+        } finally {
+            imageBitmap.recycle()
+            imageBitmap2.recycle()
         }
+        // KMK <--
     }
 
     private fun handleWideImage(imageSource: BufferedSource): BufferedSource {
         return if (
+            // KMK -->
+            !useHingeViewports &&
+            // KMK <--
             !ImageUtil.isAnimatedAndSupported(imageSource) &&
             ImageUtil.isWideImage(imageSource) &&
             viewer.config.centerMarginType and PagerConfig.CenterMarginType.WIDE_PAGE_CENTER_MARGIN > 0 &&
@@ -349,7 +569,17 @@ class PagerPageHolder(
 
     private fun decodeImage(imageSource: BufferedSource): Bitmap? {
         return try {
-            ImageDecoder.newInstance(imageSource.inputStream())?.decode()
+            // KMK -->
+            imageSource.peek().use { peek ->
+                ImageDecoder.newInstance(peek.inputStream())?.let { decoder ->
+                    try {
+                        decoder.decode()
+                    } finally {
+                        decoder.recycle()
+                    }
+                }
+            }
+            // KMK <--
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Cannot decode image" }
             null

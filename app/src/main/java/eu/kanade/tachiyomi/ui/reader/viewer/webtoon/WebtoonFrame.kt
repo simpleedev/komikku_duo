@@ -111,7 +111,9 @@ class WebtoonFrame(context: Context) : FrameLayout(context) {
             velocityX: Float,
             velocityY: Float,
         ): Boolean {
-            recycler?.onManualScroll()
+            // KMK -->
+            if (recycler?.swipeNavigationEnabled == true) recycler?.onManualScroll()
+            // KMK <--
             return recycler?.zoomFling(velocityX.toInt(), velocityY.toInt()) ?: false
         }
     }

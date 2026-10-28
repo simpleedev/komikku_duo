@@ -1,11 +1,15 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
+// KMK -->
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.tachiyomi.ui.reader.setting.swipeNavigationChanges
+import eu.kanade.tachiyomi.ui.reader.setting.swipeNavigationState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import tachiyomi.core.common.preference.Preference
+// KMK <--
 
 /**
  * Common configuration for all viewers.
@@ -15,6 +19,22 @@ abstract class ViewerConfig(readerPreferences: ReaderPreferences, private val sc
     var imagePropertyChangedListener: (() -> Unit)? = null
 
     var navigationModeChangedListener: (() -> Unit)? = null
+
+    // KMK -->
+    var swipeNavigationEnabled = true
+        private set
+    var swipeNavigationChangedListener: ((Boolean) -> Unit)? = null
+
+    protected fun observeSwipeNavigation(preferences: ReaderPreferences, webtoon: Boolean) {
+        swipeNavigationEnabled = preferences.swipeNavigationState(webtoon).enabled
+        preferences.swipeNavigationChanges(webtoon)
+            .onEach {
+                swipeNavigationEnabled = it
+                swipeNavigationChangedListener?.invoke(it)
+            }
+            .launchIn(scope)
+    }
+    // KMK <--
 
     var tappingInverted = ReaderPreferences.TappingInvertMode.NONE
     var longTapEnabled = true

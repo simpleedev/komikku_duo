@@ -50,6 +50,9 @@ fun ChapterTransition(
     transition: ChapterTransition,
     currChapterDownloaded: Boolean,
     goingToChapterDownloaded: Boolean,
+    // KMK -->
+    showMissingChapterMessage: Boolean = true,
+    // KMK <--
 ) {
     val currChapter = transition.from.chapter.toDomainChapter()
     val goingToChapter = transition.to?.chapter?.toDomainChapter()
@@ -66,6 +69,9 @@ fun ChapterTransition(
                     bottomChapterDownloaded = currChapterDownloaded,
                     fallbackLabel = stringResource(MR.strings.transition_no_previous),
                     chapterGap = calculateChapterGap(currChapter, goingToChapter),
+                    // KMK -->
+                    showMissingChapterMessage = showMissingChapterMessage,
+                    // KMK <--
                 )
             }
             is ChapterTransition.Next -> {
@@ -78,6 +84,9 @@ fun ChapterTransition(
                     bottomChapterDownloaded = goingToChapterDownloaded,
                     fallbackLabel = stringResource(MR.strings.transition_no_next),
                     chapterGap = calculateChapterGap(goingToChapter, currChapter),
+                    // KMK -->
+                    showMissingChapterMessage = showMissingChapterMessage,
+                    // KMK <--
                 )
             }
         }
@@ -94,6 +103,9 @@ private fun TransitionText(
     bottomChapterDownloaded: Boolean,
     fallbackLabel: String,
     chapterGap: Int,
+    // KMK -->
+    showMissingChapterMessage: Boolean,
+    // KMK <--
 ) {
     Column(
         modifier = Modifier
@@ -109,7 +121,9 @@ private fun TransitionText(
             )
 
             Spacer(Modifier.height(VerticalSpacerSize))
-        } else {
+            // KMK -->
+        } else if (showMissingChapterMessage) {
+            // KMK <--
             NoChapterNotification(
                 text = fallbackLabel,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
@@ -132,7 +146,9 @@ private fun TransitionText(
                 scanlator = bottomChapter.scanlator,
                 downloaded = bottomChapterDownloaded,
             )
-        } else {
+            // KMK -->
+        } else if (showMissingChapterMessage) {
+            // KMK <--
             NoChapterNotification(
                 text = fallbackLabel,
                 modifier = Modifier.align(Alignment.CenterHorizontally),

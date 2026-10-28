@@ -239,6 +239,9 @@ dependencies {
     implementation(androidx.splashscreen)
     implementation(androidx.recyclerview)
     implementation(androidx.viewpager)
+    // KMK -->
+    implementation(androidx.window)
+    // KMK <--
     implementation(androidx.profileinstaller)
 
     implementation(androidx.bundles.lifecycle)

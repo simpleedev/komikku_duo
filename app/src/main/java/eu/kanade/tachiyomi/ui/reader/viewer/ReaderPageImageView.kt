@@ -1,6 +1,9 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
+// KMK -->
+import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.drawable.Animatable
@@ -8,6 +11,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
@@ -38,6 +42,9 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.data.coil.cropBorders
 import eu.kanade.tachiyomi.data.coil.customDecoder
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.LandscapeZoomScaleType
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.PageViewport
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.ReaderHinge
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.ReaderSpreadLayout
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonSubsamplingImageView
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.view.isVisibleOnScreen
@@ -45,6 +52,7 @@ import okio.BufferedSource
 import tachiyomi.core.common.util.system.ImageUtil
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+// KMK <--
 
 /**
  * A wrapper view for showing page image.
@@ -67,6 +75,82 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private var pageView: View? = null
+
+    // KMK -->
+    private var imageViewport: PageViewport? = null
+    private var imageHinge: ReaderHinge? = null
+
+    /** Restrict only the image; loading/error overlays and the pager's tap zones stay full size. */
+    fun setImageViewport(viewport: PageViewport?, hinge: ReaderHinge? = null) {
+        if (imageViewport == viewport && imageHinge == hinge) return
+        imageViewport = viewport
+        imageHinge = hinge
+        updateImageViewport()
+        invalidate()
+    }
+
+    @SuppressLint("RtlHardcoded") // Viewports are physical display coordinates, independent of the UI language.
+    private fun updateImageViewport() {
+        val view = pageView ?: return
+        val viewport = imageViewport
+        view.layoutParams = LayoutParams(
+            viewport?.let { it.width - (imageHinge?.let { gap -> gap.right - gap.left } ?: 0) } ?: MATCH_PARENT,
+            MATCH_PARENT,
+        ).apply {
+            leftMargin = viewport?.left ?: 0
+            if (viewport != null) gravity = Gravity.TOP or Gravity.LEFT
+        }
+    }
+
+    /** A wide spread remains one continuous, zoomable image, drawn on either side of the gap. */
+    override fun drawChild(canvas: Canvas, child: View, drawingTime: Long): Boolean {
+        val hinge = imageHinge
+        if (child != pageView || hinge == null || hinge.left == hinge.right) {
+            return super.drawChild(canvas, child, drawingTime)
+        }
+        val savedLeft = canvas.save()
+        canvas.clipRect(0, 0, hinge.left, height)
+        val leftDrawn = super.drawChild(canvas, child, drawingTime)
+        canvas.restoreToCount(savedLeft)
+        val savedRight = canvas.save()
+        canvas.clipRect(hinge.right, 0, width, height)
+        canvas.translate((hinge.right - hinge.left).toFloat(), 0f)
+        val rightDrawn = super.drawChild(canvas, child, drawingTime)
+        canvas.restoreToCount(savedRight)
+        return leftDrawn || rightDrawn
+    }
+
+    override fun onDescendantInvalidated(child: View, target: View) {
+        super.onDescendantInvalidated(child, target)
+        if (imageHinge != null) invalidate()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        val hinge = imageHinge ?: return super.dispatchTouchEvent(event)
+        // Preserve the original event for the pager's gesture detector, including raw coordinates.
+        val properties = Array(event.pointerCount) {
+            MotionEvent.PointerProperties().also { p ->
+                event.getPointerProperties(it, p)
+            }
+        }
+        val coordinates = Array(event.pointerCount) {
+            MotionEvent.PointerCoords().also { p ->
+                event.getPointerCoords(it, p)
+                p.x = ReaderSpreadLayout.imageX(p.x, hinge)
+            }
+        }
+        val mapped = MotionEvent.obtain(
+            event.downTime, event.eventTime, event.action, event.pointerCount, properties, coordinates,
+            event.metaState, event.buttonState, event.xPrecision, event.yPrecision,
+            event.deviceId, event.edgeFlags, event.source, event.flags,
+        )
+        return try {
+            super.dispatchTouchEvent(mapped)
+        } finally {
+            mapped.recycle()
+        }
+    }
+    // KMK <--
 
     private var config: Config? = null
 
@@ -292,6 +376,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setOnClickListener { this@ReaderPageImageView.onViewClicked() }
         }
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
+        // KMK -->
+        updateImageViewport()
+        // KMK <--
     }
 
     private fun SubsamplingScaleImageView.setupZoom(config: Config?) {
@@ -419,6 +506,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
             }
         }
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
+        // KMK -->
+        updateImageViewport()
+        // KMK <--
     }
 
     private fun setAnimatedImage(

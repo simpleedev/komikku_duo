@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.setting
 
+// KMK -->
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
@@ -18,10 +19,12 @@ import eu.kanade.presentation.more.settings.screen.SettingsMainScreen
 import eu.kanade.presentation.more.settings.screen.SettingsTrackingScreen
 import eu.kanade.presentation.more.settings.screen.about.AboutScreen
 import eu.kanade.presentation.util.DefaultNavigatorScreenTransition
+import eu.kanade.presentation.util.HingeAwareTwoPaneLayout
 import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
-import tachiyomi.presentation.core.components.TwoPanelBox
+import eu.kanade.presentation.util.rememberVerticalWindowHinge
+// KMK <--
 
 class SettingsScreen(
     private val destination: Int? = null,
@@ -32,7 +35,10 @@ class SettingsScreen(
     @Composable
     override fun Content() {
         val parentNavigator = LocalNavigator.currentOrThrow
-        if (!isTabletUi()) {
+        // KMK -->
+        val hinge = rememberVerticalWindowHinge()
+        if (!isTabletUi() && hinge == null) {
+            // KMK <--
             Navigator(
                 screen = when (destination) {
                     Destination.About.id -> AboutScreen()
@@ -64,7 +70,10 @@ class SettingsScreen(
                 onBackPressed = null,
             ) {
                 val insets = WindowInsets.systemBars.only(WindowInsetsSides.Horizontal)
-                TwoPanelBox(
+                // KMK -->
+                HingeAwareTwoPaneLayout(
+                    hinge = hinge,
+                    // KMK <--
                     modifier = Modifier
                         .windowInsetsPadding(insets)
                         .consumeWindowInsets(insets),

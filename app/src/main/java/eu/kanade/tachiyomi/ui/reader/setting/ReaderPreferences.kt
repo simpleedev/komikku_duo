@@ -1,15 +1,18 @@
 package eu.kanade.tachiyomi.ui.reader.setting
 
+// KMK -->
 import android.os.Build
 import androidx.compose.ui.graphics.BlendMode
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import dev.icerock.moko.resources.StringResource
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerConfig
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.UnpairedPagePosition
 import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.preference.getEnum
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.i18n.sy.SYMR
+// KMK <--
 
 class ReaderPreferences(
     private val preferenceStore: PreferenceStore,
@@ -166,6 +169,11 @@ class ReaderPreferences(
 
     // KMK -->
     fun smallerTapZone() = preferenceStore.getBoolean("reader_navigation_smaller_tap_zone", false)
+
+    fun swipeNavigation(webtoon: Boolean = false) = preferenceStore.getBoolean(
+        if (webtoon) "reader_swipe_navigation_webtoon" else "reader_swipe_navigation_pager",
+        true,
+    )
     // KMK <--
 
     // endregion
@@ -205,6 +213,10 @@ class ReaderPreferences(
     fun pageLayout() = preferenceStore.getInt("page_layout", PagerConfig.PageLayout.AUTOMATIC)
 
     fun invertDoublePages() = preferenceStore.getBoolean("invert_double_pages", false)
+
+    // KMK -->
+    fun unpairedPagePosition() = preferenceStore.getEnum("unpaired_page_position", UnpairedPagePosition.AUTOMATIC)
+    // KMK <--
 
     fun centerMarginType() = preferenceStore.getInt("center_margin_type", PagerConfig.CenterMarginType.NONE)
 
@@ -324,6 +336,15 @@ class ReaderPreferences(
             SYMR.strings.double_pages,
             SYMR.strings.automatic_orientation,
         )
+
+        // KMK -->
+        val UnpairedPagePositions = mapOf(
+            UnpairedPagePosition.AUTOMATIC to KMR.strings.unpaired_page_automatic,
+            UnpairedPagePosition.RIGHT to KMR.strings.unpaired_page_right,
+            UnpairedPagePosition.LEFT to KMR.strings.unpaired_page_left,
+            UnpairedPagePosition.CENTER to KMR.strings.unpaired_page_center,
+        )
+        // KMK <--
 
         val CenterMarginTypes = listOf(
             SYMR.strings.center_margin_none,

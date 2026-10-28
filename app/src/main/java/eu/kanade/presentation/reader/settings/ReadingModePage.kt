@@ -1,5 +1,6 @@
 package eu.kanade.presentation.reader.settings
 
+// KMK -->
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -13,6 +14,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderSettingsScreenModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerConfig
 import eu.kanade.tachiyomi.ui.reader.viewer.webtoon.WebtoonViewer
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
@@ -24,6 +26,7 @@ import tachiyomi.presentation.core.components.SliderItem
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
 import java.text.NumberFormat
+// KMK <--
 
 @Composable
 internal fun ReadingModePage(screenModel: ReaderSettingsScreenModel) {
@@ -81,6 +84,10 @@ private fun PagerViewerSettings(screenModel: ReaderSettingsScreenModel) {
         onSelectInvertMode = screenModel.preferences.pagerNavInverted()::set,
     )
 
+    // KMK -->
+    SwipeNavigationItem(screenModel.preferences, webtoon = false)
+    // KMK <--
+
     val imageScaleType by screenModel.preferences.imageScaleType().collectAsState()
     SettingsChipRow(MR.strings.pref_image_scale_type) {
         ReaderPreferences.ImageScaleType.mapIndexed { index, it ->
@@ -117,6 +124,19 @@ private fun PagerViewerSettings(screenModel: ReaderSettingsScreenModel) {
     // SY <--
 
     // KMK -->
+    if (pageLayout != PagerConfig.PageLayout.SINGLE_PAGE) {
+        val position by screenModel.preferences.unpairedPagePosition().collectAsState()
+        SettingsChipRow(KMR.strings.unpaired_page_position) {
+            ReaderPreferences.UnpairedPagePositions.forEach { (value, label) ->
+                FilterChip(
+                    selected = position == value,
+                    onClick = { screenModel.preferences.unpairedPagePosition().set(value) },
+                    label = { Text(stringResource(label)) },
+                )
+            }
+        }
+    }
+
     CheckboxItem(
         label = stringResource(KMR.strings.pref_viewer_nav_smaller_tap_zone),
         pref = screenModel.preferences.smallerTapZone(),
@@ -225,6 +245,10 @@ private fun WebtoonViewerSettings(
         invertMode = webtoonNavInverted,
         onSelectInvertMode = screenModel.preferences.webtoonNavInverted()::set,
     )
+
+    // KMK -->
+    SwipeNavigationItem(screenModel.preferences, webtoon = true)
+    // KMK <--
 
     // KMK -->
     val webtoonScaleTypePref = screenModel.preferences.webtoonScaleType()

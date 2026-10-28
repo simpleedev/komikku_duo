@@ -1,11 +1,13 @@
 package eu.kanade.presentation.more.settings.screen
 
+// KMK -->
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalView
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.reader.settings.ObserveSwipeNavigation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderBottomButton
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
@@ -26,6 +28,7 @@ import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.text.NumberFormat
+// KMK <--
 
 object SettingsReaderScreen : SearchableSettings {
     @Suppress("unused")
@@ -240,6 +243,9 @@ object SettingsReaderScreen : SearchableSettings {
 
     @Composable
     private fun getPagedGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+        // KMK -->
+        ObserveSwipeNavigation(readerPreferences, webtoon = false)
+        // KMK <--
         val navModePref = readerPreferences.navigationModePager()
         val imageScaleTypePref = readerPreferences.imageScaleType()
         val dualPageSplitPref = readerPreferences.dualPageSplitPaged()
@@ -268,6 +274,13 @@ object SettingsReaderScreen : SearchableSettings {
                         .toImmutableMap(),
                     title = stringResource(MR.strings.pref_viewer_nav),
                 ),
+                // KMK -->
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.swipeNavigation(webtoon = false),
+                    title = stringResource(KMR.strings.pref_swipe_navigation),
+                    subtitle = stringResource(KMR.strings.pref_swipe_navigation_summary),
+                ),
+                // KMK <--
                 Preference.PreferenceItem.ListPreference(
                     preference = readerPreferences.pagerNavInverted(),
                     entries = persistentListOf(
@@ -371,6 +384,9 @@ object SettingsReaderScreen : SearchableSettings {
 
     @Composable
     private fun getWebtoonGroup(readerPreferences: ReaderPreferences): Preference.PreferenceGroup {
+        // KMK -->
+        ObserveSwipeNavigation(readerPreferences, webtoon = true)
+        // KMK <--
         val numberFormat = remember { NumberFormat.getPercentInstance() }
 
         val navModePref = readerPreferences.navigationModeWebtoon()
@@ -394,6 +410,13 @@ object SettingsReaderScreen : SearchableSettings {
                         .toImmutableMap(),
                     title = stringResource(MR.strings.pref_viewer_nav),
                 ),
+                // KMK -->
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = readerPreferences.swipeNavigation(webtoon = true),
+                    title = stringResource(KMR.strings.pref_swipe_navigation),
+                    subtitle = stringResource(KMR.strings.pref_swipe_navigation_summary),
+                ),
+                // KMK <--
                 Preference.PreferenceItem.ListPreference(
                     preference = readerPreferences.webtoonNavInverted(),
                     entries = persistentListOf(
@@ -648,6 +671,16 @@ object SettingsReaderScreen : SearchableSettings {
                     title = stringResource(SYMR.strings.page_layout),
                     subtitle = stringResource(SYMR.strings.automatic_can_still_switch),
                 ),
+                // KMK -->
+                Preference.PreferenceItem.ListPreference(
+                    preference = readerPreferences.unpairedPagePosition(),
+                    entries = ReaderPreferences.UnpairedPagePositions
+                        .mapValues { stringResource(it.value) }
+                        .toImmutableMap(),
+                    title = stringResource(KMR.strings.unpaired_page_position),
+                    enabled = pageLayout != PagerConfig.PageLayout.SINGLE_PAGE,
+                ),
+                // KMK <--
                 Preference.PreferenceItem.SwitchPreference(
                     preference = readerPreferences.invertDoublePages(),
                     title = stringResource(SYMR.strings.invert_double_pages),

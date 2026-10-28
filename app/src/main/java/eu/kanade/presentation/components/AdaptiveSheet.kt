@@ -1,5 +1,6 @@
 package eu.kanade.presentation.components
 
+// KMK -->
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,9 +13,11 @@ import cafe.adriel.voyager.core.annotation.InternalVoyagerApi
 import cafe.adriel.voyager.core.lifecycle.DisposableEffectIgnoringConfiguration
 import cafe.adriel.voyager.core.screen.Screen
 import cafe.adriel.voyager.navigator.Navigator
+import eu.kanade.presentation.util.HingeAwareSettingsSheet
 import eu.kanade.presentation.util.ScreenTransition
 import eu.kanade.presentation.util.isTabletUi
 import tachiyomi.presentation.core.components.AdaptiveSheet as AdaptiveSheetImpl
+// KMK <--
 
 @OptIn(InternalVoyagerApi::class)
 @Composable
@@ -64,6 +67,9 @@ fun AdaptiveSheet(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     enableSwipeDismiss: Boolean = true,
+    // KMK -->
+    avoidHinge: Boolean = false,
+    // KMK <--
     content: @Composable () -> Unit,
 ) {
     val isTabletUi = isTabletUi()
@@ -72,14 +78,19 @@ fun AdaptiveSheet(
         onDismissRequest = onDismissRequest,
         properties = dialogProperties,
     ) {
-        AdaptiveSheetImpl(
-            isTabletUi = isTabletUi,
-            enableSwipeDismiss = enableSwipeDismiss,
-            onDismissRequest = onDismissRequest,
-            modifier = modifier,
-        ) {
-            content()
+        // KMK -->
+        val sheet: @Composable () -> Unit = {
+            AdaptiveSheetImpl(
+                isTabletUi = isTabletUi,
+                enableSwipeDismiss = enableSwipeDismiss,
+                onDismissRequest = onDismissRequest,
+                modifier = modifier,
+            ) {
+                content()
+            }
         }
+        if (avoidHinge) HingeAwareSettingsSheet(onDismissRequest, sheet) else sheet()
+        // KMK <--
     }
 }
 

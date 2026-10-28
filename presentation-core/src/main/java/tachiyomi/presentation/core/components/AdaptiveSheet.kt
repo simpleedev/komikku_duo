@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredWidthIn
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
@@ -85,7 +84,9 @@ fun AdaptiveSheet(
         ) {
             Surface(
                 modifier = Modifier
-                    .requiredWidthIn(max = 460.dp)
+                    // KMK -->
+                    .widthIn(max = 460.dp)
+                    // KMK <--
                     .clickable(
                         interactionSource = null,
                         indication = null,

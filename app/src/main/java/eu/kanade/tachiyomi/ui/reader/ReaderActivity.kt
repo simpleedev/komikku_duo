@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader
 
+// KMK -->
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.assist.AssistContent
@@ -71,7 +72,7 @@ import eu.kanade.presentation.reader.DisplayRefreshHost
 import eu.kanade.presentation.reader.OrientationSelectDialog
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
-import eu.kanade.presentation.reader.ReaderPageIndicator
+import eu.kanade.presentation.reader.ReaderPageIndicators
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.appbars.NavBarType
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
@@ -148,6 +149,7 @@ import uy.kohesive.injekt.api.get
 import java.io.ByteArrayOutputStream
 import kotlin.time.Duration.Companion.seconds
 import androidx.compose.ui.graphics.Color as ComposeColor
+// KMK <--
 
 class ReaderActivity : BaseActivity() {
 
@@ -336,7 +338,9 @@ class ReaderActivity : BaseActivity() {
 
             Box(modifier = Modifier.fillMaxSize()) {
                 if (!state.menuVisible && showPageNumber) {
-                    ReaderPageIndicator(
+                    // KMK -->
+                    ReaderPageIndicators(
+                        viewer = state.viewer as? PagerViewer,
                         // SY -->
                         currentPage = state.currentPageText,
                         // SY <--
@@ -345,6 +349,7 @@ class ReaderActivity : BaseActivity() {
                             .align(Alignment.BottomCenter)
                             .navigationBarsPadding(),
                     )
+                    // KMK <--
                 }
 
                 ContentOverlay(state = state)

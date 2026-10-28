@@ -238,4 +238,14 @@
     <string name="pref_discord_show_download_button_summary">Displays a button to download the app</string>
     <string name="pref_discord_show_discord_button">Show Discord Button</string>
     <string name="pref_discord_show_discord_button_summary">Displays a button to join the Discord server</string>
+    <!-- KMK -->
+    <string name="unpaired_page_position">Unpaired page position</string>
+    <string name="unpaired_page_automatic">Automatic</string>
+    <string name="unpaired_page_right">Right</string>
+    <string name="unpaired_page_left">Left</string>
+    <string name="unpaired_page_center">Center</string>
+    <string name="transition_no_more_chapters">No more chapters</string>
+    <string name="pref_swipe_navigation">Swipe navigation</string>
+    <string name="pref_swipe_navigation_summary">Automatically enabled if tap navigation and volume-key navigation are both off.</string>
+    <!-- KMK -->
 </resources>

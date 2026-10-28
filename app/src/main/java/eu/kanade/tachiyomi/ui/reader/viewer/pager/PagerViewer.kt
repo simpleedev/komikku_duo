@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.pager
 
+// KMK -->
 import android.graphics.PointF
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -10,7 +11,11 @@ import androidx.annotation.ColorInt
 import androidx.core.view.children
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.viewpager.widget.ViewPager
+import androidx.window.layout.FoldingFeature
+import androidx.window.layout.WindowInfoTracker
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
@@ -23,9 +28,14 @@ import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.injectLazy
 import kotlin.math.min
+// KMK <--
 
 /**
  * Implementation of a [Viewer] to display pages with a [ViewPager].
@@ -53,6 +63,30 @@ abstract class PagerViewer(
      */
     val config = PagerConfig(this, scope)
 
+    // KMK -->
+    val sideBySide: Boolean
+        get() = config.doublePages && !config.dualPageSplit && this !is VerticalPagerViewer
+
+    var hinge: ReaderHinge? = null
+        private set
+
+    private var windowHinge: ReaderHinge? = null
+    private val hingeLayoutListener = android.view.ViewTreeObserver.OnGlobalLayoutListener { updateHinge() }
+
+    private fun updateHinge() {
+        val origin = IntArray(2)
+        pager.getLocationInWindow(origin)
+        val next = windowHinge?.relativeTo(origin[0], origin[1], pager.width, pager.height)
+        if (hinge != next) {
+            hinge = next
+            if (sideBySide) {
+                // Recreate from original sources when entering/leaving a spanned window.
+                pager.post { if (scope.isActive) refreshAdapter() }
+            }
+        }
+    }
+    // KMK <--
+
     /**
      * Adapter of the pager.
      */
@@ -68,6 +102,30 @@ abstract class PagerViewer(
      */
     /* [EXH] private */
     var currentPage: ReaderItem? = null
+
+    // KMK -->
+    private val mutablePageNumbers = MutableStateFlow<ReaderPageNumbers?>(null)
+    internal val pageNumbers = mutablePageNumbers.asStateFlow()
+
+    internal fun updatePageNumbers() {
+        val spread = adapter.joinedItems.getOrNull(pager.currentItem)
+        mutablePageNumbers.value = if (sideBySide) {
+            val page = spread?.readingPage
+            val position = page?.let { getPageHolder(it)?.indicatorPosition }
+                ?: ReaderSpreadLayout.unpairedPosition(
+                    config.unpairedPagePosition,
+                    sideBySide = true,
+                    portrait = page?.fullPage == false,
+                    isRtl = this is R2LPagerViewer,
+                    inverted = config.invertDoublePages,
+                    openingPage = page?.index == 0,
+                )
+            spread?.pageNumbers(this is R2LPagerViewer, config.invertDoublePages, position) ?: ReaderPageNumbers()
+        } else {
+            null
+        }
+    }
+    // KMK <--
 
     /**
      * Viewer chapters to set when the pager enters idle mode. Otherwise, if the view was settling
@@ -110,6 +168,10 @@ abstract class PagerViewer(
     }
 
     init {
+        // KMK -->
+        pager.swipeNavigationEnabled = config.swipeNavigationEnabled
+        config.swipeNavigationChangedListener = { pager.swipeNavigationEnabled = it }
+        // KMK <--
         pager.isVisible = false // Don't layout the pager yet
         pager.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         pager.isFocusable = false
@@ -137,8 +199,10 @@ abstract class PagerViewer(
         pager.longTapListener = f@{
             if (activity.viewModel.state.value.menuVisible || config.longTapEnabled) {
                 val item = adapter.joinedItems.getOrNull(pager.currentItem)
-                val firstPage = item?.first as? ReaderPage
-                val secondPage = item?.second as? ReaderPage
+                // KMK -->
+                val firstPage = item?.readingPage
+                val secondPage = item?.takeIf { it.hasExtraPage }?.second as? ReaderPage
+                // KMK <--
                 if (firstPage is ReaderPage) {
                     activity.onPageLongTap(firstPage, secondPage)
                     return@f true
@@ -165,10 +229,27 @@ abstract class PagerViewer(
             val showOnStart = config.navigationOverlayOnStart || config.forceNavigationOverlay
             activity.binding.navigationOverlay.setNavigation(config.navigator, showOnStart)
         }
+
+        // KMK -->
+        pager.viewTreeObserver.addOnGlobalLayoutListener(hingeLayoutListener)
+        scope.launch {
+            activity.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                WindowInfoTracker.getOrCreate(activity).windowLayoutInfo(activity).collect { layout ->
+                    windowHinge = layout.displayFeatures.filterIsInstance<FoldingFeature>()
+                        .firstOrNull { it.isSeparating && it.orientation == FoldingFeature.Orientation.VERTICAL }
+                        ?.bounds?.let { ReaderHinge(it.left, it.top, it.right, it.bottom) }
+                    updateHinge()
+                }
+            }
+        }
+        // KMK <--
     }
 
     override fun destroy() {
         super.destroy()
+        // KMK -->
+        pager.viewTreeObserver.removeOnGlobalLayoutListener(hingeLayoutListener)
+        // KMK <--
         scope.cancel()
     }
 
@@ -187,18 +268,28 @@ abstract class PagerViewer(
     /**
      * Returns the PagerPageHolder for the provided page
      */
+    // KMK -->
     private fun getPageHolder(page: ReaderPage): PagerPageHolder? =
         pager.children
-            .filterIsInstance<PagerPageHolder>()
+            .mapNotNull {
+                when (it) {
+                    is PagerPageHolder -> it
+                    is PagerTransitionHolder -> it.openingHolder
+                    else -> null
+                }
+            }
             .firstOrNull { it.item.first == page || it.item.second == page }
+    // KMK <--
 
     /**
      * Called when a new page (either a [ReaderPage] or [ChapterTransition]) is marked as active
      */
+    // KMK -->
     fun onPageChange(position: Int) {
-        val pagePair = adapter.joinedItems.getOrNull(position)
-        val page = pagePair?.first
-        if (page != null && currentPage != page) {
+        updatePageNumbers()
+        val pagePair = adapter.joinedItems.getOrNull(position) ?: return
+        val page = pagePair.readingPage ?: pagePair.first
+        if (currentPage != page) {
             val allowPreload = checkAllowPreload(page as? ReaderPage)
             val forward = when {
                 currentPage is ReaderPage && page is ReaderPage -> {
@@ -216,11 +307,16 @@ abstract class PagerViewer(
             }
             currentPage = page
             when (page) {
-                is ReaderPage -> onReaderPageSelected(page, allowPreload, forward, pagePair.second != null)
+                is ReaderPage -> {
+                    // Directly opening on Previous / Current must still preload pages for backward navigation.
+                    (pagePair.first as? ChapterTransition)?.let(::onTransitionSelected)
+                    onReaderPageSelected(page, allowPreload, forward, pagePair.hasExtraPage)
+                }
                 is ChapterTransition -> onTransitionSelected(page)
             }
         }
     }
+    // KMK <--
 
     private fun checkAllowPreload(page: ReaderPage?): Boolean {
         // Page is transition page - preload allowed
@@ -325,10 +421,15 @@ abstract class PagerViewer(
      * Tells this viewer to move to the given [page].
      */
     override fun moveToPage(page: ReaderPage) {
-        val position = adapter.joinedItems.indexOfFirst { it.first == page || it.second == page }
+        // KMK -->
+        val position = adapter.joinedItems.readerSpreadPosition(page)
+        // KMK <--
         if (position != -1) {
             val currentPosition = pager.currentItem
             pager.setCurrentItem(position, true)
+            // KMK -->
+            updatePageNumbers()
+            // KMK <--
             // manually call onPageChange since ViewPager listener is not triggered in this case
             if (currentPosition == position) {
                 onPageChange(position)
@@ -337,8 +438,10 @@ abstract class PagerViewer(
                 // Instead just update the page count in ui
                 val joinedItem = adapter.joinedItems.firstOrNull { it.first == page || it.second == page }
                 activity.onPageSelected(
-                    joinedItem?.first as? ReaderPage ?: page,
-                    joinedItem?.second != null,
+                    // KMK -->
+                    joinedItem?.readingPage ?: page,
+                    joinedItem?.hasExtraPage == true,
+                    // KMK <--
                 )
             }
         } else {
@@ -365,7 +468,9 @@ abstract class PagerViewer(
      */
     protected open fun moveRight() {
         if (pager.currentItem != adapter.count - 1) {
-            val holder = (currentPage as? ReaderPage)?.let(::getPageHolder)
+            // KMK -->
+            val holder = (currentPage as? ReaderPage)?.let { getPageHolder(it)?.navigationImage }
+            // KMK <--
             if (holder != null && config.navigateToPan && holder.canPanRight()) {
                 holder.panRight()
             } else {
@@ -379,7 +484,9 @@ abstract class PagerViewer(
      */
     protected open fun moveLeft() {
         if (pager.currentItem != 0) {
-            val holder = (currentPage as? ReaderPage)?.let(::getPageHolder)
+            // KMK -->
+            val holder = (currentPage as? ReaderPage)?.let { getPageHolder(it)?.navigationImage }
+            // KMK <--
             if (holder != null && config.navigateToPan && holder.canPanLeft()) {
                 holder.panLeft()
             } else {
@@ -393,7 +500,7 @@ abstract class PagerViewer(
      */
     protected open fun moveUp() {
         // KMK -->
-        val holder = (currentPage as? ReaderPage)?.let(::getPageHolder)
+        val holder = (currentPage as? ReaderPage)?.let { getPageHolder(it)?.navigationImage }
         if (holder != null && holder.canPanUp()) {
             holder.panUp()
         } else {
@@ -407,7 +514,7 @@ abstract class PagerViewer(
      */
     protected open fun moveDown() {
         // KMK -->
-        val holder = (currentPage as? ReaderPage)?.let(::getPageHolder)
+        val holder = (currentPage as? ReaderPage)?.let { getPageHolder(it)?.navigationImage }
         if (holder != null && holder.canPanDown()) {
             holder.panDown()
         } else {
@@ -425,6 +532,9 @@ abstract class PagerViewer(
         adapter.refresh()
         pager.adapter = adapter
         pager.setCurrentItem(currentItem, false)
+        // KMK -->
+        updatePageNumbers()
+        // KMK <--
     }
 
     /**
@@ -503,7 +613,9 @@ abstract class PagerViewer(
 
     // SY -->
     fun updateShifting(page: ReaderPage? = null) {
-        adapter.pageToShift = page ?: adapter.joinedItems.getOrNull(pager.currentItem)?.first as? ReaderPage
+        // KMK -->
+        adapter.pageToShift = page ?: adapter.joinedItems.getOrNull(pager.currentItem)?.readingPage
+        // KMK <--
     }
 
     fun splitDoublePages(currentPage: ReaderPage) {

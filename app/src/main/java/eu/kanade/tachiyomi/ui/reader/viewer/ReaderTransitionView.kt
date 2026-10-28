@@ -38,10 +38,20 @@ class ReaderTransitionView @JvmOverloads constructor(
         layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
     }
 
-    fun bind(transition: ChapterTransition, downloadManager: DownloadManager, manga: Manga?) {
+    // KMK -->
+    fun bind(
+        transition: ChapterTransition,
+        downloadManager: DownloadManager,
+        manga: Manga?,
+        showMissingChapterMessage: Boolean = true,
+    ) {
+        // KMK <--
         data = if (manga != null) {
             Data(
                 transition = transition,
+                // KMK -->
+                showMissingChapterMessage = showMissingChapterMessage,
+                // KMK <--
                 currChapterDownloaded = transition.from.pageLoader?.isLocal == true,
                 goingToChapterDownloaded = manga.isLocal() ||
                     transition.to?.chapter?.let { goingToChapter ->
@@ -80,6 +90,9 @@ class ReaderTransitionView @JvmOverloads constructor(
                         transition = it.transition,
                         currChapterDownloaded = it.currChapterDownloaded,
                         goingToChapterDownloaded = it.goingToChapterDownloaded,
+                        // KMK -->
+                        showMissingChapterMessage = it.showMissingChapterMessage,
+                        // KMK <--
                     )
                 }
             }
@@ -90,5 +103,8 @@ class ReaderTransitionView @JvmOverloads constructor(
         val transition: ChapterTransition,
         val currChapterDownloaded: Boolean,
         val goingToChapterDownloaded: Boolean,
+        // KMK -->
+        val showMissingChapterMessage: Boolean,
+        // KMK <--
     )
 }

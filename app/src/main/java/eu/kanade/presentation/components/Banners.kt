@@ -1,5 +1,6 @@
 package eu.kanade.presentation.components
 
+// KMK -->
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -31,10 +32,13 @@ import androidx.compose.ui.util.fastForEach
 import androidx.compose.ui.util.fastMap
 import androidx.compose.ui.util.fastMaxBy
 import dev.icerock.moko.resources.StringResource
+import eu.kanade.presentation.util.HingeAwarePaneRow
+import eu.kanade.presentation.util.rememberVerticalWindowHinge
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.i18n.stringResource
 import java.math.RoundingMode
 import java.text.NumberFormat
+// KMK <--
 
 val DownloadedOnlyBannerBackgroundColor
     @Composable get() = MaterialTheme.colorScheme.tertiary
@@ -94,6 +98,9 @@ fun AppStateBanners(
     val density = LocalDensity.current
     val mainInsets = WindowInsets.statusBars
     val mainInsetsTop = mainInsets.getTop(density)
+    // KMK -->
+    val hinge = rememberVerticalWindowHinge()
+    // KMK <--
     SubcomposeLayout(modifier = modifier) { constraints ->
         val indexingPlaceable = subcompose(0) {
             AnimatedVisibility(
@@ -103,26 +110,30 @@ fun AppStateBanners(
                 enter = expandVertically(),
                 exit = shrinkVertically(),
             ) {
-                IndexingDownloadBanner(
-                    modifier = Modifier.windowInsetsPadding(mainInsets),
-                    // KMK -->
-                    text = when {
-                        updating -> progress?.let {
-                            stringResource(
-                                MR.strings.notification_updating_progress,
-                                percentFormatter.format(it),
-                            )
-                        } ?: stringResource(MR.strings.updating_library)
-                        syncing -> progress?.let {
-                            stringResource(MR.strings.syncing_library) + " (${percentFormatter.format(it)})"
-                        } ?: stringResource(MR.strings.syncing_library)
-                        restoring -> progress?.let {
-                            stringResource(MR.strings.restoring_backup) + " (${percentFormatter.format(it)})"
-                        } ?: stringResource(MR.strings.restoring_backup)
-                        else -> stringResource(MR.strings.download_notifier_cache_renewal)
-                    },
-                    // KMK <--
-                )
+                // KMK -->
+                HingeAwarePaneRow(hinge, Modifier.background(IndexingBannerBackgroundColor)) {
+                    IndexingDownloadBanner(
+                        modifier = Modifier.windowInsetsPadding(mainInsets),
+                        // KMK -->
+                        text = when {
+                            updating -> progress?.let {
+                                stringResource(
+                                    MR.strings.notification_updating_progress,
+                                    percentFormatter.format(it),
+                                )
+                            } ?: stringResource(MR.strings.updating_library)
+                            syncing -> progress?.let {
+                                stringResource(MR.strings.syncing_library) + " (${percentFormatter.format(it)})"
+                            } ?: stringResource(MR.strings.syncing_library)
+                            restoring -> progress?.let {
+                                stringResource(MR.strings.restoring_backup) + " (${percentFormatter.format(it)})"
+                            } ?: stringResource(MR.strings.restoring_backup)
+                            else -> stringResource(MR.strings.download_notifier_cache_renewal)
+                        },
+                        // KMK <--
+                    )
+                }
+                // KMK <--
             }
         }.fastMap { it.measure(constraints) }
         val indexingHeight = indexingPlaceable.fastMaxBy { it.height }?.height ?: 0
@@ -134,9 +145,13 @@ fun AppStateBanners(
                 exit = shrinkVertically(),
             ) {
                 val top = (mainInsetsTop - indexingHeight).coerceAtLeast(0)
-                DownloadedOnlyModeBanner(
-                    modifier = Modifier.windowInsetsPadding(WindowInsets(top = top)),
-                )
+                // KMK -->
+                HingeAwarePaneRow(hinge, Modifier.background(DownloadedOnlyBannerBackgroundColor)) {
+                    DownloadedOnlyModeBanner(
+                        modifier = Modifier.windowInsetsPadding(WindowInsets(top = top)),
+                    )
+                }
+                // KMK <--
             }
         }.fastMap { it.measure(constraints) }
         val downloadedOnlyHeight = downloadedOnlyPlaceable.fastMaxBy { it.height }?.height ?: 0
@@ -148,9 +163,13 @@ fun AppStateBanners(
                 exit = shrinkVertically(),
             ) {
                 val top = (mainInsetsTop - indexingHeight - downloadedOnlyHeight).coerceAtLeast(0)
-                IncognitoModeBanner(
-                    modifier = Modifier.windowInsetsPadding(WindowInsets(top = top)),
-                )
+                // KMK -->
+                HingeAwarePaneRow(hinge, Modifier.background(IncognitoModeBannerBackgroundColor)) {
+                    IncognitoModeBanner(
+                        modifier = Modifier.windowInsetsPadding(WindowInsets(top = top)),
+                    )
+                }
+                // KMK <--
             }
         }.fastMap { it.measure(constraints) }
         val incognitoHeight = incognitoPlaceable.fastMaxBy { it.height }?.height ?: 0

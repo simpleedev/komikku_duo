@@ -59,6 +59,9 @@ class PagerConfig(
 
     var landscapeZoomScaleType = LandscapeZoomScaleType.FIT
         private set
+
+    var unpairedPagePosition = UnpairedPagePosition.AUTOMATIC
+        private set
     // KMK <--
 
     // SY -->
@@ -86,6 +89,9 @@ class PagerConfig(
     // SY <--
 
     init {
+        // KMK -->
+        observeSwipeNavigation(readerPreferences, webtoon = false)
+        // KMK <--
         readerPreferences.readerTheme()
             .register(
                 {
@@ -176,6 +182,9 @@ class PagerConfig(
                 { landscapeZoomScaleType = it },
                 { imagePropertyChangedListener?.invoke() },
             )
+
+        readerPreferences.unpairedPagePosition()
+            .register({ unpairedPagePosition = it }, { imagePropertyChangedListener?.invoke() })
         // KMK <--
 
         // SY -->

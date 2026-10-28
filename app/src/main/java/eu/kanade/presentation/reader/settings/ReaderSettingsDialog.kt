@@ -42,6 +42,9 @@ fun ReaderSettingsDialog(
             },
             tabTitles = tabTitles,
             pagerState = pagerState,
+            // KMK -->
+            avoidHinge = true,
+            // KMK <--
         ) { page ->
             val window = (LocalView.current.parent as? DialogWindowProvider)?.window
 

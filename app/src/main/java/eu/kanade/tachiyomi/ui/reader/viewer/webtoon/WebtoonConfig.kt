@@ -62,6 +62,9 @@ class WebtoonConfig(
 
     // SY <--
     init {
+        // KMK -->
+        observeSwipeNavigation(readerPreferences, webtoon = true)
+        // KMK <--
         readerPreferences.cropBordersWebtoon()
             .register({ imageCropBorders = it }, { imagePropertyChangedListener?.invoke() })
 
