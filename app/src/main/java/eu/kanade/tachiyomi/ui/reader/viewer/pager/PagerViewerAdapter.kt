@@ -186,9 +186,13 @@ class PagerViewerAdapter(
         if (view is PagerPageHolder && view.sideBySideAtCreation != viewer.sideBySide) return POSITION_NONE
         if (view is PagerTransitionHolder && view.sideBySideAtCreation != viewer.sideBySide) return POSITION_NONE
         if (view is PagerTransitionHolder) {
-            val position = joinedItems.indexOfFirst { it.sameReaderSpread(view.item) }
+            val position = joinedItems.indexOfFirst {
+                (it.first as? ChapterTransition)?.sameBoundary(view.transition) == true
+            }
+            if (position >= 0) view.bindOpening(joinedItems[position].second as? ReaderPage)
             return position.takeIf { it >= 0 } ?: POSITION_NONE
         }
+        if (view is PagerPageHolder) view.updateChapterDetails()
         // KMK <--
         if (view is PositionableView) {
             val position = joinedItems.indexOf(view.item)

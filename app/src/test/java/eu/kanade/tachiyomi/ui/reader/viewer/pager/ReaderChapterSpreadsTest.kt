@@ -232,6 +232,47 @@ class ReaderChapterSpreadsTest {
         assertSame(current.pages!![0], activated[activated.readerSpreadPosition(current.pages!![0])].readingPage)
     }
 
+    @Test
+    fun `chapter activation reuses the opening spread boundary and its rendered page`() {
+        val previous = chapter(1, 4)
+        val current = chapter(2, 5)
+        val old = join(previous.pages!! + ChapterTransition.Next(previous, current) + current.pages!!)
+            .single { it.second === current.pages!![0] }
+        repeat(3) {
+            val rebuilt = join(previous.pages!! + ChapterTransition.Prev(current, previous) + current.pages!!)
+            val opening = rebuilt.single { it.second === current.pages!![0] }
+            assertTrue(old.sameReaderSpread(opening))
+            assertSame(old.readingPage, opening.readingPage)
+            assertEquals(rebuilt.indexOf(opening), rebuilt.readerSpreadPosition(old.first))
+            assertEquals(1, rebuilt.count { it.readingPage === current.pages!![0] })
+        }
+    }
+
+    @Test
+    fun `loading completion retains the boundary while attaching an opening only once`() {
+        val previous = chapter(1, 4)
+        val current = chapter(2, 5)
+        val next = ChapterTransition.Next(previous, current)
+        val activated = ChapterTransition.Prev(current, previous)
+        assertTrue(next.sameBoundary(activated))
+        assertTrue((next to null).sameReaderSpread(activated to null))
+        assertFalse((next to null).sameReaderSpread(activated to current.pages!![0]))
+        assertTrue((next to current.pages!![0]).sameReaderSpread(activated to current.pages!![0]))
+        assertFalse((next to current.pages!![0]).sameReaderSpread(activated to current.pages!![1]))
+    }
+
+    @Test
+    fun `different and reversed boundaries never retain each others labels`() {
+        val previous = chapter(1, 4)
+        val current = chapter(2, 5)
+        val following = chapter(3, 6)
+        val boundary = ChapterTransition.Next(previous, current)
+        assertFalse(boundary.sameBoundary(ChapterTransition.Next(current, previous)))
+        assertFalse(boundary.sameBoundary(ChapterTransition.Next(current, following)))
+        assertFalse(boundary.sameBoundary(ChapterTransition.Prev(following, current)))
+        assertFalse(ChapterTransition.Prev(current, null).sameBoundary(ChapterTransition.Next(current, null)))
+    }
+
     private fun join(items: List<ReaderItem>) = joinReaderChapterSpreads(items, true, false, null)
 
     private fun assertEveryPageOnce(items: List<ReaderItem>, spreads: List<Pair<ReaderItem, ReaderItem?>>) {

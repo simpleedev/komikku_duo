@@ -38,17 +38,25 @@ class PagerTransitionHolder(
     readerThemedContext: Context,
     val viewer: PagerViewer,
     val transition: ChapterTransition,
-    private val openingPage: ReaderPage? = null,
+    openingPage: ReaderPage? = null,
     @ColorInt private val seedColor: Int? = null,
 ) : FrameLayout(readerThemedContext), ViewPagerAdapter.PositionableView {
     private val scope = MainScope()
     val sideBySideAtCreation = viewer.sideBySide
     private val sideBySide = sideBySideAtCreation
+    private var openingPage = openingPage
     internal var openingHolder: PagerPageHolder? = null
         private set
 
     override val item
         get() = transition to openingPage
+
+    /** Preserve the frame, its original labels, and the decoded image through chapter activation. */
+    internal fun bindOpening(page: ReaderPage?) {
+        if (openingPage === page) return
+        openingPage = page
+        updateLeftContent()
+    }
 
     private val detailsPane = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL

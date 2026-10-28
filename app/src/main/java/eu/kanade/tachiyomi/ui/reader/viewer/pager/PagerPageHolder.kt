@@ -10,16 +10,21 @@ import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+import android.widget.FrameLayout
 import androidx.annotation.ColorInt
 import androidx.core.view.isVisible
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderTransitionView
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -95,6 +100,9 @@ class PagerPageHolder(
     private var secondImageView: ReaderPageImageView? = null
     private var portraitPage = false
     private var navigateSecondImage = false
+    private var chapterDetailsView: ReaderTransitionView? = null
+    private var chapterDetailsPane: FrameLayout? = null
+    private var chapterDetailsTransition: ChapterTransition.Next? = null
 
     internal val indicatorPosition: UnpairedPagePosition
         get() = ReaderSpreadLayout.unpairedPosition(
@@ -156,7 +164,51 @@ class PagerPageHolder(
                 gravity = Gravity.TOP or Gravity.LEFT
             }
         }
+        updateChapterDetails()
         viewer.updatePageNumbers()
+    }
+
+    @SuppressLint("RtlHardcoded") // The details occupy the physical display opposite the final page.
+    internal fun updateChapterDetails() {
+        if (width <= 0) return
+        val details = ReaderChapterTailDetails.create(
+            page,
+            extraPage,
+            viewer.chaptersForLayout,
+            indicatorPosition,
+            viewer.sideBySide && !inTransition,
+        )
+        if (details == null) {
+            chapterDetailsPane?.isVisible = false
+            return
+        }
+        val detailsView = chapterDetailsView ?: ReaderTransitionView(context, seedColor = seedColor).also {
+            val padding = 32.dpToPx
+            it.setPadding(padding, 0, padding, 0)
+            val pane = FrameLayout(context).apply {
+                // Match the normal transition background even when the image chooses its own color.
+                background = viewer.activity.binding.readerContainer.background?.constantState?.newDrawable()?.mutate()
+                addView(it, LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
+            }
+            addView(pane)
+            chapterDetailsPane = pane
+            chapterDetailsView = it
+        }
+        if (chapterDetailsTransition?.sameBoundary(details.transition) != true) {
+            detailsView.bind(details.transition, viewer.downloadManager, viewer.activity.viewModel.manga)
+            chapterDetailsTransition = details.transition
+        }
+        val hinge = viewer.hinge?.relativeTo(0, 0, width, height)
+        val viewport = ReaderSpreadLayout.viewport(width, details.position, hinge)
+        val pane = chapterDetailsPane ?: return
+        val params = pane.layoutParams as LayoutParams
+        val gravity = Gravity.LEFT
+        if (params.width != viewport.width || params.leftMargin != viewport.left || params.gravity != gravity) {
+            pane.layoutParams = LayoutParams(viewport.width, MATCH_PARENT, gravity).apply {
+                leftMargin = viewport.left
+            }
+        }
+        pane.isVisible = true
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {

@@ -51,15 +51,23 @@ internal val Pair<ReaderItem, ReaderItem?>.readingPage: ReaderPage?
 internal val Pair<ReaderItem, ReaderItem?>.hasExtraPage: Boolean
     get() = first is ReaderPage && second is ReaderPage
 
-/** Start/end transitions can compare equal upstream, but need different text and holders. */
+/** A boundary keeps its rendered view when Next(A, B) becomes Prev(B, A) on chapter activation. */
+internal fun ChapterTransition.sameBoundary(other: ChapterTransition): Boolean {
+    val previous = if (this is ChapterTransition.Next) from else to
+    val next = if (this is ChapterTransition.Next) to else from
+    val otherPrevious = if (other is ChapterTransition.Next) other.from else other.to
+    val otherNext = if (other is ChapterTransition.Next) other.to else other.from
+    return previous === otherPrevious && next === otherNext
+}
+
+/** Start/end boundaries remain distinct, while an unchanged opening survives chapter activation. */
 internal fun Pair<ReaderItem, ReaderItem?>.sameReaderSpread(other: Pair<ReaderItem, ReaderItem?>): Boolean {
     val transition = first as? ChapterTransition ?: return this == other
     val otherTransition = other.first as? ChapterTransition ?: return false
-    return transition.javaClass == otherTransition.javaClass &&
-        transition.from == otherTransition.from && transition.to == otherTransition.to && second === other.second
+    return transition.sameBoundary(otherTransition) && second === other.second
 }
 
-/** Keep both page aliases and transition direction when restoring a selection after chapter loading. */
+/** Keep page aliases and chapter boundaries when restoring a selection after chapter loading. */
 internal fun List<Pair<ReaderItem, ReaderItem?>>.readerSpreadPosition(item: ReaderItem?): Int {
     item ?: return -1
     if (item !is ChapterTransition) return indexOfFirst { it.first === item || it.second === item }

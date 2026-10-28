@@ -2,7 +2,8 @@
 
 Source: `https://github.com/simpleedev/komikku_duo`, starting at
 `1656575e8fdaaef010c652f9758130c2a01d8890` on `master`.
-Work is on `feat/duo-reader-layout`. The supplied workspace was initially empty;
+The initial implementation was pushed as `3792eba` on `feat/duo-reader-layout`;
+the chapter-handoff follow-up is on `fix/duo-chapter-handoff`. The supplied workspace was initially empty;
 the fork was fetched and checked out before editing. There were no existing local changes.
 
 ## Behavior
@@ -94,6 +95,22 @@ page 1 uses the normal image loading/error/retry controls in the left region.
 At the final chapter, **No more chapters** appears on the left; the redundant inline
 end message is suppressed on the right. Single-page, vertical, and webtoon transitions
 retain the original inline layout and messages.
+
+When the final portrait page occupies only one display, the empty opposite display
+shows **Finished / Next** details, including the existing no-next-chapter message
+when appropriate. This uses the final page's current holder; it adds no page, does
+not advance to the next chapter, and leaves the counter only beneath the image.
+It applies to either physical side, including explicit unpaired-page preferences.
+Interior pages, pairs, continuous images, and non-side-by-side modes are unaffected.
+The details pane uses the normal reader background independently of the image's
+automatic background, keeping its text readable on either display.
+
+Chapter activation changes the adapter boundary from `Next(A, B)` to `Prev(B, A)`.
+Those represent the same boundary. The adapter now retains the transition frame,
+its original labels, and its decoded opening image through that change. If a page
+list arrives while the transition is visible, the opening is attached to that
+existing frame once. Unchanged opening objects are never disposed and recreated
+by an adapter update. First/final boundaries and unrelated chapters remain distinct.
 
 ## Swipe navigation and settings layout
 
@@ -207,6 +224,8 @@ static bitmap for alignment. Memory use on a physical Duo has not been measured.
 | `app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderActivity.kt` | Connect the reader overlay to displayed spread counters |
 | `app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/ReaderPageNumbers.kt` | Pure physical page-number and chapter-total mapping |
 | `app/src/test/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/ReaderPageNumbersTest.kt` | Direction/inversion, real indices, chapter openings, blank panes, isolated and continuous pages |
+| `app/src/main/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/ReaderChapterTailDetails.kt` | Choose the empty final-page display and its following chapter |
+| `app/src/test/java/eu/kanade/tachiyomi/ui/reader/viewer/pager/ReaderChapterTailDetailsTest.kt` | Empty-pane filling, terminal chapters, activation, excluded layouts, and one-page progress |
 | `DUO_READER_VALIDATION.md` | Delivery and manual validation notes |
 
 ## Automated verification
@@ -217,7 +236,7 @@ Windows PowerShell. Set `JAVA_HOME` and `ANDROID_HOME` to the installed location
 ```powershell
 .\gradlew.bat spotlessApply
 .\gradlew.bat spotlessCheck
-.\gradlew.bat assembleDebug :app:testDebugUnitTest --tests '*ReaderSpreadLayoutTest' --tests '*UnpairedPagePreferenceTest' --tests '*ReaderTransitionSpreadTest' --tests '*ReaderChapterSpreadsTest' --tests '*SwipeNavigationTest' --tests '*HingePaneBoundsTest' --tests '*ReaderPageNumbersTest' :app:lintDebug
+.\gradlew.bat assembleDebug :app:testDebugUnitTest --tests '*ReaderSpreadLayoutTest' --tests '*UnpairedPagePreferenceTest' --tests '*ReaderTransitionSpreadTest' --tests '*ReaderChapterSpreadsTest' --tests '*SwipeNavigationTest' --tests '*HingePaneBoundsTest' --tests '*ReaderPageNumbersTest' --tests '*ReaderChapterTailDetailsTest' :app:lintDebug
 ```
 
 | Check | Actual result |
@@ -225,7 +244,7 @@ Windows PowerShell. Set `JAVA_HOME` and `ANDROID_HOME` to the installed location
 | `spotlessApply` | Passed |
 | `spotlessCheck` | Passed |
 | `assembleDebug` | Passed; ARM64 and universal APKs produced |
-| Focused `testDebugUnitTest` | 77 passed, 0 failures/errors/skips (including 15 swipe-navigation, 7 pane-geometry, and 7 page-counter cases) |
+| Focused `testDebugUnitTest` | 87 passed, 0 failures/errors/skips (including 15 swipe-navigation, 7 pane-geometry, 7 page-counter, and 10 chapter-handoff cases) |
 | `:app:lintDebug` | Completed; not a clean report (see below) |
 
 Android lint reports **7 errors, 123 warnings, and 1 hint**. The seven error locations
@@ -260,6 +279,11 @@ reusing holders and restoring selection, and find the opening after chapter acti
 Page-counter cases cover RTL/LTR and inversion, nonconsecutive page identities,
 the opening chapter's own total, both transition directions, loading/end transitions,
 explicit and automatic isolated-page positions, continuous images, and missing totals.
+Chapter-handoff cases cover stable Next/Prev boundaries across repeated activation,
+attaching an opening to an existing loading transition, distinct reversed/start/end
+boundaries, details in the empty final-page display, terminal chapters, retained
+previous-chapter details, excluded layouts, unknown/loading chapters, and one-page
+identity/progress preservation.
 
 Geometry tests simulate fold/rotation input; they are not Android lifecycle,
 native image-decoder, gesture instrumentation, visual, or physical-device tests.
@@ -278,6 +302,8 @@ The manga screen follow-up logs are `build/duo-manga-spotless-apply.log`,
 `build/duo-manga-spotless-check.log`, and `build/duo-manga-build-validation.log`.
 The banner/counter follow-up logs are `build/duo-indicators-spotless-apply.log`,
 `build/duo-indicators-spotless-check.log`, and `build/duo-indicators-build-validation.log`.
+The chapter-handoff follow-up logs are `build/duo-handoff-spotless-apply.log`,
+`build/duo-handoff-spotless-check.log`, and `build/duo-handoff-build-validation.log`.
 
 ## APK and installation
 
@@ -288,7 +314,7 @@ The requested named copy is delivered to
 `C:\Users\johnw\Dropbox\appdev\komikku_duo.apk`, with identical content to the ARM64 artifact.
 
 ARM64 APK SHA-256:
-`e3c7362e46799321f3c68e879bab6cee7ac87cd315afe7a5a7141d3a0f101a59`.
+`71a0bd37aee16f1386d21542f5e3eaa876a460178e745f52d3a04d58cc8b0295`.
 `apksigner verify --print-certs` passed. The local debug signing certificate's
 SHA-1 is `50f87a68e0496a85d6644d54426406866dab3598`.
 
@@ -404,6 +430,15 @@ selected storage folder, then refresh Local source. They contain no library data
     shifting, slider jumps, image loading/reclassification, and chapter activation.
     Blank and final-message panes must have no counter. Check live settings changes,
     fold/unfold, rotation, and the original single counter in other reader modes.
+
+17. Reproduce the reported chapter handoff: a 24-page chapter's last portrait on
+    the right must show Finished / Next on the left. Advance once: the next opening
+    must appear on the left, with stable Finished / Next labels on the right while
+    the active chapter updates. Continue at pages 2–3 without repeating page 1.
+    Test slow page-list loading, retries, delayed preloading, direct openings,
+    backward navigation, a one-page chapter, no following chapter, and explicit
+    left/right/center placement. Check for image flashes or changing labels during
+    activation and confirm counters, zoom, progress, and wide images still work.
 
 Physical hinge reporting, real rendering/gestures, peak memory, and end-to-end Google
 Drive behavior remain unverified until these device tests are completed.

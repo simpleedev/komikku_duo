@@ -71,6 +71,8 @@ abstract class PagerViewer(
         private set
 
     private var windowHinge: ReaderHinge? = null
+    internal var chaptersForLayout: ViewerChapters? = null
+        private set
     private val hingeLayoutListener = android.view.ViewTreeObserver.OnGlobalLayoutListener { updateHinge() }
 
     private fun updateHinge() {
@@ -394,6 +396,9 @@ abstract class PagerViewer(
      * Sets the active [chapters] on this pager.
      */
     internal fun setChaptersInternal(chapters: ViewerChapters) {
+        // KMK -->
+        chaptersForLayout = chapters
+        // KMK <--
         // Remove listener so the change in item doesn't trigger it
         // since we're about to change the size of the items
         // If we don't the size change could put us on a new chapter
