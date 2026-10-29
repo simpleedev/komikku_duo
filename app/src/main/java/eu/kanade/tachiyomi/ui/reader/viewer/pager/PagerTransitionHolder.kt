@@ -9,10 +9,16 @@ import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.annotation.ColorInt
+import androidx.appcompat.widget.AppCompatImageView
 import androidx.appcompat.widget.AppCompatTextView
 import androidx.core.view.isVisible
+import coil3.load
+import coil3.request.error
+import coil3.request.fallback
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -32,7 +38,7 @@ import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 
-/** Chapter details on the physical right, with the actual opening page or end message on the left. */
+/** Manga cover on the physical right, with the actual opening page or end message on the left. */
 @SuppressLint("ViewConstructor")
 class PagerTransitionHolder(
     readerThemedContext: Context,
@@ -51,7 +57,7 @@ class PagerTransitionHolder(
     override val item
         get() = transition to openingPage
 
-    /** Preserve the frame, its original labels, and the decoded image through chapter activation. */
+    /** Preserve the frame, cover, and decoded opening page through chapter activation. */
     internal fun bindOpening(page: ReaderPage?) {
         if (openingPage === page) return
         openingPage = page
@@ -61,7 +67,7 @@ class PagerTransitionHolder(
     private val detailsPane = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
-        val padding = (if (sideBySide) 32 else 64).dpToPx
+        val padding = (if (sideBySide) 0 else 64).dpToPx
         setPadding(padding, 0, padding, 0)
     }
 
@@ -78,15 +84,23 @@ class PagerTransitionHolder(
     init {
         addView(leftPane, LayoutParams(MATCH_PARENT, MATCH_PARENT))
         addView(detailsPane, LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        val transitionView = ReaderTransitionView(context, seedColor = seedColor)
-        detailsPane.addView(transitionView)
+        if (sideBySide) {
+            val manga = viewer.activity.viewModel.manga
+            val cover = AppCompatImageView(context).apply {
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                contentDescription = manga?.title
+                load(manga) {
+                    error(R.drawable.cover_error_vector)
+                    fallback(R.drawable.cover_error_vector)
+                }
+            }
+            detailsPane.addView(cover, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        } else {
+            val transitionView = ReaderTransitionView(context, seedColor = seedColor)
+            detailsPane.addView(transitionView)
+            transitionView.bind(transition, viewer.downloadManager, viewer.activity.viewModel.manga)
+        }
         detailsPane.addView(pagesContainer)
-        transitionView.bind(
-            transition,
-            viewer.downloadManager,
-            viewer.activity.viewModel.manga,
-            showMissingChapterMessage = !(sideBySide && transition is ChapterTransition.Next && transition.to == null),
-        )
         updateLeftContent()
         observeStatus()
     }

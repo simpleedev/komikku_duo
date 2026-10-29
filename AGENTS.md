@@ -164,6 +164,8 @@ Reference: `domain/src/main/java/tachiyomi/domain/category/interactor/HideCatego
 
 ## Build & CI
 
+**Local APK delivery:** Always copy completed APKs to `C:\Users\johnw\Dropbox\appdev` and link to the copy there when delivering a build.
+
 Build types (`applicationIdSuffix`): `debug` (`.dev`), `release`, `releaseTest` (`.rt`), `foss` (`.foss`), `preview` (`.beta`, CI default), `benchmark` (`.benchmark`).
 
 Gradle `-P` flags (`buildSrc/src/main/kotlin/mihon/buildlogic/BuildConfig.kt`):
