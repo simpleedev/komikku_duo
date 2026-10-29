@@ -838,9 +838,9 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                 }
 
                 // Define the SyncDataJob
-                val syncDataJob = OneTimeWorkRequestBuilder<SyncDataJob>()
-                    .addTag(SyncDataJob.TAG_MANUAL)
-                    .build()
+                // KMK -->
+                val syncDataJob = SyncDataJob.beforeLibraryUpdate()
+                // KMK <--
 
                 // Chain SyncDataJob to run before LibraryUpdateJob
                 val libraryUpdateJob = OneTimeWorkRequestBuilder<LibraryUpdateJob>()

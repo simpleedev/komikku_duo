@@ -1,20 +1,29 @@
 package eu.kanade.tachiyomi.data.sync
 
+// KMK -->
 import android.content.Context
 import android.net.Uri
 import eu.kanade.domain.sync.SyncPreferences
+import eu.kanade.tachiyomi.data.BackupRestoreStatus
+import eu.kanade.tachiyomi.data.SyncStatus
+import eu.kanade.tachiyomi.data.backup.BackupNotifier
 import eu.kanade.tachiyomi.data.backup.create.BackupCreator
 import eu.kanade.tachiyomi.data.backup.create.BackupOptions
 import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.models.BackupChapter
 import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
+import eu.kanade.tachiyomi.data.backup.restore.BackupRestorer
 import eu.kanade.tachiyomi.data.backup.restore.RestoreOptions
 import eu.kanade.tachiyomi.data.backup.restore.restorers.MangaRestorer
 import eu.kanade.tachiyomi.data.sync.service.GoogleDriveSyncService
 import eu.kanade.tachiyomi.data.sync.service.SyncData
 import eu.kanade.tachiyomi.data.sync.service.SyncYomiSyncService
+import eu.kanade.tachiyomi.data.sync.service.WebDavSyncMerger
 import eu.kanade.tachiyomi.data.sync.service.WebDavSyncService
+import exh.log.xLogD
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
 import logcat.LogPriority
@@ -31,6 +40,7 @@ import java.io.File
 import java.io.IOException
 import java.util.Date
 import kotlin.system.measureTimeMillis
+// KMK <--
 
 /**
  * A manager to handle synchronization tasks in the app, such as updating
@@ -73,6 +83,21 @@ class SyncManager(
      * from the database using the BackupManager, then synchronizes the data with a sync service.
      */
     suspend fun syncData() {
+        // KMK -->
+        val accepted = SyncCoordinator.runSync {
+            val status = Injekt.get<SyncStatus>()
+            status.start()
+            try {
+                performSync()
+            } finally {
+                withContext(NonCancellable) { status.stop() }
+            }
+        }
+        if (!accepted) xLogD("Sync request coalesced: another sync/restore is active")
+    }
+
+    private suspend fun performSync() {
+        // KMK <--
         // Reset isSyncing in case it was left over or failed syncing during restore.
         handler.await(inTransaction = true) {
             mangasQueries.resetIsSyncing()
@@ -99,6 +124,49 @@ class SyncManager(
             savedSearchesFeeds = syncOptions.savedSearchesFeeds,
             // SY <--
         )
+
+        // KMK -->
+        if (SyncService.fromInt(syncPreferences.syncService().get()) == SyncService.WEB_DAV) {
+            val snapshotStarted = System.nanoTime()
+            val backup = handler.await(inTransaction = true) { createSyncBackup(backupOptions) }
+            xLogD("WebDAV stage=snapshot durationMs=%s", (System.nanoTime() - snapshotStarted) / 1_000_000)
+            val merger = WebDavSyncMerger(syncOptions)
+            xLogD("WebDAV snapshot revision=%s", merger.revision(backup))
+            WebDavSyncService(context, json, syncPreferences, notifier).synchronize(backup) { merged ->
+                val status = Injekt.get<BackupRestoreStatus>()
+                try {
+                    handler.await(inTransaction = true) {
+                        BackupRestorer(context, BackupNotifier(context), true).restoreSync(
+                            merged,
+                            RestoreOptions(
+                                libraryEntries = syncOptions.libraryEntries,
+                                categories = syncOptions.categories,
+                                appSettings = syncOptions.appSettings,
+                                sourceSettings = syncOptions.sourceSettings,
+                                extensionStores = syncOptions.extensionStores,
+                                savedSearchesFeeds = syncOptions.savedSearchesFeeds,
+                            ),
+                            onProgress = status::updateProgress,
+                            onStage = { xLogD("WebDAV restore stage=%s", it) },
+                            beforeRestore = {
+                                check(merger.revision(createSyncBackup(backupOptions)) == merger.revision(backup)) {
+                                    "Local data changed while synchronizing; retry required"
+                                }
+                                Injekt.get<SyncStatus>().stop()
+                                status.updateProgress(0f)
+                                status.start()
+                            },
+                        )
+                        // Record what the local restorers actually applied (IDs/fetch data are device local).
+                        createSyncBackup(backupOptions)
+                    }
+                } finally {
+                    withContext(NonCancellable) { status.stop() }
+                }
+            }
+            return
+        }
+        // KMK <--
 
         logcat(LogPriority.DEBUG) { "Begin create backup" }
         val backupManga = backupCreator.backupMangas(databaseManga, backupOptions)
@@ -245,6 +313,22 @@ class SyncManager(
             null
         }
     }
+
+    // KMK -->
+    private suspend fun createSyncBackup(options: BackupOptions): Backup {
+        val mangas = backupCreator.backupMangas(getAllMangaThatNeedsSync(), options)
+        return Backup(
+            backupManga = mangas,
+            backupCategories = backupCreator.backupCategories(options),
+            backupSources = backupCreator.backupSources(mangas),
+            backupPreferences = backupCreator.backupAppPreferences(options),
+            backupSourcePreferences = backupCreator.backupSourcePreferences(options),
+            backupExtensionStores = backupCreator.backupExtensionStores(options),
+            backupSavedSearches = backupCreator.backupSavedSearches(options),
+            backupFeeds = backupCreator.backupFeeds(options),
+        )
+    }
+    // KMK <--
 
     /**
      * Retrieves all manga from the local database.

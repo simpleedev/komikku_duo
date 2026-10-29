@@ -51,6 +51,9 @@ class MangaRestorer(
     private val insertFlatMetadata: InsertFlatMetadata = Injekt.get(),
     private val getFlatMetadataById: GetFlatMetadataById = Injekt.get(),
     // SY <--
+    // KMK -->
+    private val useMergedState: Boolean = false,
+    // KMK <--
 ) {
     private var now = ZonedDateTime.now()
     private var currentFetchWindow = fetchInterval.getWindow(now)
@@ -120,6 +123,32 @@ class MangaRestorer(
     }
 
     private suspend fun restoreExistingManga(manga: Manga, dbManga: Manga): Manga {
+        // KMK -->
+        if (isSync && useMergedState) {
+            // The WebDAV merger already resolved per-field ancestry. Preserve device-local
+            // download/update scheduling, and apply the synchronized series preferences too.
+            return updateManga(
+                dbManga.copy(
+                    favorite = manga.favorite,
+                    ogTitle = manga.ogTitle,
+                    ogArtist = manga.ogArtist,
+                    ogAuthor = manga.ogAuthor,
+                    ogDescription = manga.ogDescription,
+                    ogGenre = manga.ogGenre,
+                    ogStatus = manga.ogStatus,
+                    ogThumbnailUrl = manga.ogThumbnailUrl,
+                    initialized = manga.initialized,
+                    viewerFlags = manga.viewerFlags,
+                    chapterFlags = manga.chapterFlags,
+                    dateAdded = manga.dateAdded,
+                    updateStrategy = manga.updateStrategy,
+                    version = manga.version,
+                    notes = manga.notes,
+                    memo = manga.memo,
+                ),
+            )
+        }
+        // KMK <--
         return if (manga.version > dbManga.version) {
             updateManga(dbManga.copyFrom(manga).copy(id = dbManga.id))
         } else {
@@ -196,7 +225,10 @@ class MangaRestorer(
 
                 when {
                     dbChapter == null -> chapter // New chapter
-                    chapter.forComparison() == dbChapter.forComparison() -> null // Same state; skip
+                    // KMK -->
+                    chapter.forComparison() == dbChapter.forComparison() &&
+                        (!useMergedState || chapter.version == dbChapter.version) -> null
+                    // KMK <--
                     else -> updateChapterBasedOnSyncState(chapter, dbChapter) // Update existed chapter
                 }
             }
@@ -210,7 +242,9 @@ class MangaRestorer(
         return if (isSync) {
             chapter.copy(
                 id = dbChapter.id,
-                bookmark = chapter.bookmark || dbChapter.bookmark,
+                // KMK -->
+                bookmark = if (useMergedState) chapter.bookmark else chapter.bookmark || dbChapter.bookmark,
+                // KMK <--
                 read = chapter.read,
                 lastPageRead = chapter.lastPageRead,
                 // KMK -->
@@ -392,7 +426,9 @@ class MangaRestorer(
             }
         }
 
-        if (mangaCategoriesToUpdate.isNotEmpty()) {
+        // KMK -->
+        if (mangaCategoriesToUpdate.isNotEmpty() || (useMergedState && backupCategories.isNotEmpty())) {
+            // KMK <--
             handler.await(true) {
                 mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
                 mangaCategoriesToUpdate.forEach { (mangaId, categoryId) ->

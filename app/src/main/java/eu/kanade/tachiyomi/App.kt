@@ -231,7 +231,9 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         val syncPreferences: SyncPreferences = Injekt.get()
         val syncTriggerOpt = syncPreferences.getSyncTriggerOptions()
         if (syncPreferences.isSyncEnabled() && syncTriggerOpt.syncOnAppStart) {
-            SyncDataJob.startNow(this@App)
+            // KMK -->
+            SyncDataJob.startNow(this@App, trigger = "app-start")
+            // KMK <--
         }
 
         initializeMigrator()
@@ -307,7 +309,9 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         val syncPreferences: SyncPreferences = Injekt.get()
         val syncTriggerOpt = syncPreferences.getSyncTriggerOptions()
         if (syncPreferences.isSyncEnabled() && syncTriggerOpt.syncOnAppResume) {
-            SyncDataJob.startNow(this@App)
+            // KMK -->
+            SyncDataJob.startNow(this@App, trigger = "app-resume")
+            // KMK <--
         }
 
         // AM (DISCORD) -->

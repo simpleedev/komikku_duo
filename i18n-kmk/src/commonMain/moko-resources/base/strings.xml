@@ -248,4 +248,8 @@
     <string name="pref_swipe_navigation">Swipe navigation</string>
     <string name="pref_swipe_navigation_summary">Automatically enabled if tap navigation and volume-key navigation are both off.</string>
     <!-- KMK -->
+    <!-- KMK: WebDAV synchronization -->
+    <string name="webdav_sync_unsafe_server">The WebDAV server did not provide a strong ETag. The shared backup was left unchanged to protect changes from other devices. Enable ETags on the server, then retry.</string>
+    <string name="webdav_sync_conflict">Conflicting changes were found. Local and remote recovery copies were saved on this device; conflicting data was not overwritten. Review the changes before retrying.</string>
+    <string name="webdav_sync_failed">WebDAV synchronization failed. Your local data is available and the sync checkpoint was not advanced. Check the connection and server settings, then retry.</string>
 </resources>

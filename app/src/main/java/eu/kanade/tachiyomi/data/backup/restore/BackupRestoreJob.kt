@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.data.backup.restore
 
+// KMK -->
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.net.Uri
@@ -14,18 +15,21 @@ import androidx.work.workDataOf
 import eu.kanade.tachiyomi.data.BackupRestoreStatus
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
 import eu.kanade.tachiyomi.data.notification.Notifications
+import eu.kanade.tachiyomi.data.sync.SyncCoordinator
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.isRunning
 import eu.kanade.tachiyomi.util.system.setForegroundSafely
 import eu.kanade.tachiyomi.util.system.workManager
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+// KMK <--
 
 class BackupRestoreJob(private val context: Context, workerParams: WorkerParameters) :
     CoroutineWorker(context, workerParams) {
@@ -45,7 +49,7 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
         }
 
         // KMK -->
-        backupRestoreStatus.start()
+        var restoreStarted = false
         // KMK <--
 
         val isSync = inputData.getBoolean(SYNC_KEY, false)
@@ -53,7 +57,13 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
         setForegroundSafely()
 
         return try {
-            BackupRestorer(context, notifier, isSync).restore(uri, options)
+            // KMK -->
+            SyncCoordinator.runRestore {
+                backupRestoreStatus.start()
+                restoreStarted = true
+                BackupRestorer(context, notifier, isSync).restore(uri, options)
+            }
+            // KMK <--
             Result.success()
         } catch (e: Exception) {
             if (e is CancellationException) {
@@ -67,7 +77,7 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
         } finally {
             context.cancelNotification(Notifications.ID_RESTORE_PROGRESS)
             // KMK -->
-            backupRestoreStatus.stop()
+            if (restoreStarted) withContext(NonCancellable) { backupRestoreStatus.stop() }
             // KMK <--
         }
     }
@@ -109,10 +119,6 @@ class BackupRestoreJob(private val context: Context, workerParams: WorkerParamet
 
         fun stop(context: Context) {
             context.workManager.cancelUniqueWork(TAG)
-            // KMK -->
-            val backupRestoreStatus: BackupRestoreStatus = Injekt.get()
-            runBlocking { backupRestoreStatus.stop() }
-            // KMK <--
         }
     }
 }

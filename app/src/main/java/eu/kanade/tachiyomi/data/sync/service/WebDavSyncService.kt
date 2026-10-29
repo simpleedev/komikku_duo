@@ -1,30 +1,25 @@
 package eu.kanade.tachiyomi.data.sync.service
 
+// KMK -->
 import android.content.Context
+import android.util.AtomicFile
 import eu.kanade.domain.sync.SyncPreferences
 import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.sync.SyncNotifier
-import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.PUT
 import eu.kanade.tachiyomi.network.await
 import exh.log.xLogD
-import exh.log.xLogE
-import exh.log.xLogI
-import exh.log.xLogW
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.protobuf.ProtoBuf
-import okhttp3.ConnectionPool
 import okhttp3.Credentials
-import okhttp3.Headers
-import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.apache.http.HttpStatus
 import tachiyomi.core.common.i18n.stringResource
-import tachiyomi.i18n.MR
+import tachiyomi.i18n.kmk.KMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 class WebDavSyncService(
@@ -34,159 +29,121 @@ class WebDavSyncService(
     private val notifier: SyncNotifier,
     private val protoBuf: ProtoBuf = Injekt.get(),
 ) : SyncService(context, json, syncPreferences) {
+    private val settings = syncPreferences.getSyncSettings()
+    private val merger = WebDavSyncMerger(settings)
+    private val base = syncPreferences.webDavUrl().get().trim().toHttpUrl()
+    private val folder = syncPreferences.webDavFolder().get().trim('/')
+    private val url = base.newBuilder().apply {
+        if (!base.encodedPath.endsWith('/')) addPathSegment("")
+        folder.split('/').filter { it.isNotEmpty() }.forEach(::addPathSegment)
+        addPathSegment("backup.proto")
+    }.build()
+    private val credentials = Credentials.basic(
+        syncPreferences.webDavUsername().get().trim(),
+        syncPreferences.webDavPassword().get(),
+    )
+    // Scope validators and baselines to the account, endpoint and selected sections.
+    private val scope = WebDavSyncMerger.digest("$url|${syncPreferences.webDavUsername().get()}|$settings")
+    private val directory = File(context.noBackupFilesDir, "webdav-sync/$scope").apply { mkdirs() }
+    private val checkpointFile = AtomicFile(File(directory, "checkpoint.json"))
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(90, TimeUnit.SECONDS)
+        .build()
+    private val transport = HttpWebDavTransport(client, url.toString(), credentials, protoBuf, ::ensureFolderExists)
 
-    private class WebDavException(message: String?) : Exception(message)
+    override suspend fun doSync(syncData: SyncData): Backup? =
+        error("WebDAV must await local application before saving its checkpoint")
 
-    private val url: String = syncPreferences.webDavUrl().get().trim()
-    private val folder: String = syncPreferences.webDavFolder().get().trim('/')
-    private val username: String = syncPreferences.webDavUsername().get().trim()
-    private val password: String = syncPreferences.webDavPassword().get()
-    private val credentials: String = Credentials.basic(username, password)
-
-    private fun buildWebDavFileUrl(fileName: String = "backup.proto"): String {
-        val cleanBase = url.trimEnd('/')
-        return if (folder.isNotEmpty()) "$cleanBase/$folder/$fileName" else "$cleanBase/$fileName"
+    suspend fun synchronize(local: Backup, restore: suspend (Backup) -> Backup) {
+        var remoteBefore: Backup? = null
+        val checkpoint = try {
+            json.decodeFromString(WebDavSyncCheckpoint.serializer(), checkpointFile.readFully().decodeToString())
+        } catch (e: Exception) {
+            // A missing/old/damaged checkpoint only disables the optimization, never deletes data.
+            xLogD("WebDAV checkpoint unavailable (%s); reading remote", e.javaClass.simpleName)
+            null
+        }
+        try {
+            repeat(3) { attempt ->
+                try {
+                    WebDavSyncEngine(transport, merger) { xLogD("WebDAV %s", it) }.sync(
+                        local,
+                        checkpoint,
+                        restore,
+                        protect = { before, remote ->
+                            remoteBefore = remote
+                            saveRecovery("local", before)
+                            saveRecovery("remote", remote)
+                            if (checkpoint == null && merger.revision(before) != merger.revision(remote)) {
+                                // Preserve bootstrap alternatives even after the rotating recovery files advance.
+                                saveRecovery("bootstrap-local-${merger.revision(before)}", before)
+                                saveRecovery("bootstrap-remote-${merger.revision(remote)}", remote)
+                                xLogD("WebDAV bootstrap retained both original snapshots for recovery")
+                            }
+                        },
+                        commit = {
+                            atomicWrite(checkpointFile, json.encodeToString(WebDavSyncCheckpoint.serializer(), it).toByteArray())
+                        },
+                    )
+                    syncPreferences.lastSyncTimestamp().set(System.currentTimeMillis())
+                    return
+                } catch (e: WebDavPreconditionException) {
+                    xLogD("WebDAV concurrent writer; re-read and merge attempt=%s", attempt + 1)
+                    if (attempt == 2) throw e
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (e is WebDavConflictException || e is WebDavPreconditionException) {
+                saveRecovery("conflict-local-${merger.revision(local)}", local)
+                remoteBefore?.let { saveRecovery("conflict-remote-${merger.revision(it)}", it) }
+            }
+            // Server bodies, URLs and throwable messages can contain credentials or user content.
+            xLogD("WebDAV failed type=%s", e.javaClass.simpleName)
+            val message = when (e) {
+                is WebDavUnsafeWriteException -> KMR.strings.webdav_sync_unsafe_server
+                is WebDavConflictException, is WebDavPreconditionException -> KMR.strings.webdav_sync_conflict
+                else -> KMR.strings.webdav_sync_failed
+            }
+            notifier.showSyncError(context.stringResource(message))
+            throw WebDavSyncFailure()
+        }
     }
 
-    private val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .writeTimeout(30, TimeUnit.SECONDS)
-            .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
-            .build()
-    }
-
-    private fun validateSettings(): Boolean {
-        if (url.isEmpty() || !url.startsWith("http")) {
-            notifier.showSyncError("Invalid WebDAV URL. Please check your settings.")
-            return false
-        }
-        if (username.isBlank() || password.isBlank()) {
-            notifier.showSyncError("Username or password cannot be empty.")
-            return false
-        }
-        return true
+    private fun saveRecovery(side: String, backup: Backup) {
+        // These may contain private settings; keep them in app-private, non-cloud-backed storage.
+        val file = File(directory, "$side.proto")
+        atomicWrite(AtomicFile(file), protoBuf.encodeToByteArray(Backup.serializer(), backup))
     }
 
     private suspend fun ensureFolderExists() {
-        if (folder.isEmpty()) return
-        if (!validateSettings()) return
-        val baseUrl = url.trimEnd('/')
-        val folderParts = folder.split('/').filter { it.isNotEmpty() }
-        if (folderParts.isEmpty()) return
-
-        var currentPath = baseUrl
-        for (part in folderParts) {
-            currentPath = "$currentPath/$part"
-            if (!createSingleFolder(currentPath)) {
-                throw WebDavException("Failed to create folder: $currentPath")
+        val builder = base.newBuilder().apply { if (!base.encodedPath.endsWith('/')) addPathSegment("") }
+        folder.split('/').filter { it.isNotEmpty() }.forEach { part ->
+            builder.addPathSegment(part)
+            val request = Request.Builder().url(builder.build()).method("MKCOL", null)
+                .header("Authorization", credentials).build()
+            client.newCall(request).await().use {
+                if (!it.isSuccessful && it.code != 405) throw WebDavHttpException(it.code)
             }
         }
     }
 
-    private suspend fun createSingleFolder(folderUrl: String): Boolean {
-        val request = Request.Builder()
-            .url(folderUrl)
-            .method("MKCOL", null)
-            .header("Authorization", credentials)
-            .header("Content-Length", "0")
-            .build()
-
-        val response = client.newCall(request).await()
-        val success = response.isSuccessful || response.code == 405 || response.code == 409
-        response.close()
-        return success
-    }
-
-    override suspend fun doSync(syncData: SyncData): Backup? {
-        ensureFolderExists()
+    private fun atomicWrite(file: AtomicFile, bytes: ByteArray) {
+        val output = file.startWrite()
         try {
-            val (remoteData, etag) = pullSyncData()
-
-            val finalSyncData = if (remoteData != null) {
-                assert(etag.isNotEmpty()) { "ETag should never be empty if remote data is not null" }
-                xLogD("Try update remote data with ETag(%s)", etag)
-                mergeSyncData(syncData, remoteData)
-            } else {
-                xLogD("Try overwrite remote data with ETag(%s)", etag)
-                syncData
-            }
-
-            pushSyncData(finalSyncData, etag)
-            return finalSyncData.backup
+            output.write(bytes)
+            file.finishWrite(output)
         } catch (e: Exception) {
-            xLogE("WebDAV sync error:", e)
-            notifier.showSyncError(e.message)
-            return null
-        }
-    }
-
-    private suspend fun pullSyncData(): Pair<SyncData?, String> {
-        if (!validateSettings()) return Pair(null, "")
-
-        val lastETag = syncPreferences.lastSyncEtag().get()
-        val headersBuilder = Headers.Builder().add("Authorization", credentials)
-        if (lastETag.isNotEmpty()) headersBuilder.add("If-None-Match", lastETag)
-
-        val requestUrl = buildWebDavFileUrl()
-        val request = GET(requestUrl, headers = headersBuilder.build())
-        val response = client.newCall(request).await()
-
-        return when (response.code) {
-            HttpStatus.SC_NOT_MODIFIED -> Pair(null, lastETag)
-            HttpStatus.SC_NOT_FOUND -> Pair(null, "")
-            else -> {
-                if (response.isSuccessful) {
-                    val newETag = response.headers["ETag"]?.trim('"') ?: ""
-                    val bytes = response.body.byteStream().use { it.readBytes() }
-                    try {
-                        val backup = protoBuf.decodeFromByteArray(Backup.serializer(), bytes)
-                        Pair(SyncData(backup = backup), newETag)
-                    } catch (e: Exception) {
-                        xLogE("Invalid backup format:", e)
-                        Pair(null, "")
-                    }
-                } else {
-                    val body = response.body.string()
-                    throw WebDavException("Failed to download: $body")
-                }
-            }
-        }
-    }
-
-    private suspend fun pushSyncData(syncData: SyncData, eTag: String) {
-        val backup = syncData.backup ?: return
-
-        if (!validateSettings()) return
-
-        val byteArray = protoBuf.encodeToByteArray(Backup.serializer(), backup)
-        if (byteArray.isEmpty()) throw IllegalStateException(context.stringResource(MR.strings.empty_backup_error))
-
-        val body = byteArray.toRequestBody("application/octet-stream".toMediaType())
-        val headersBuilder = Headers.Builder().add("Authorization", credentials)
-        if (eTag.isNotEmpty()) headersBuilder.add("If-Match", eTag)
-
-        val requestUrl = buildWebDavFileUrl()
-        val request = PUT(requestUrl, headers = headersBuilder.build(), body = body)
-        val response = client.newCall(request).await()
-
-        when {
-            response.isSuccessful -> {
-                val newETag = response.headers["ETag"]?.trim('"') ?: ""
-                if (newETag.isNotEmpty()) syncPreferences.lastSyncEtag().set(newETag)
-                xLogI("WebDAV sync completed")
-            }
-            response.code == HttpStatus.SC_PRECONDITION_FAILED -> {
-                val message = "Sync conflict detected. Another device may have updated the remote backup. " +
-                    "Please retry syncing or check your WebDAV folder."
-                xLogW(message)
-                notifier.showSyncError(message)
-            }
-            else -> {
-                val bodyStr = response.body.string()
-                throw WebDavException("Upload failed: $bodyStr")
-            }
+            file.failWrite(output)
+            throw e
         }
     }
 }
+
+/** The localized failure has already been shown; do not replace it with a raw exception message. */
+class WebDavSyncFailure : Exception()
+// KMK <--

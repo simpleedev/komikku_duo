@@ -1,9 +1,11 @@
 package eu.kanade.tachiyomi.data.backup.restore
 
+// KMK -->
 import android.content.Context
 import android.net.Uri
 import eu.kanade.tachiyomi.data.backup.BackupDecoder
 import eu.kanade.tachiyomi.data.backup.BackupNotifier
+import eu.kanade.tachiyomi.data.backup.models.Backup
 import eu.kanade.tachiyomi.data.backup.models.BackupCategory
 import eu.kanade.tachiyomi.data.backup.models.BackupExtensionStore
 import eu.kanade.tachiyomi.data.backup.models.BackupFeed
@@ -21,15 +23,20 @@ import eu.kanade.tachiyomi.data.notification.Notifications
 import eu.kanade.tachiyomi.util.system.createFileInCacheDir
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.data.DatabaseHandler
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+// KMK <--
 
 class BackupRestorer(
     private val context: Context,
@@ -45,6 +52,8 @@ class BackupRestorer(
     // SY <--
     // KMK -->
     private val feedRestorer: FeedRestorer = FeedRestorer(),
+    private val handler: DatabaseHandler = Injekt.get(),
+    private val syncMangaRestorerFactory: () -> MangaRestorer = { MangaRestorer(isSync = true, useMergedState = true) },
     // KMK <--
 ) {
 
@@ -56,6 +65,73 @@ class BackupRestorer(
      * Mapping of source ID to source name from backup data
      */
     private var sourceMapping: Map<Long, String> = emptyMap()
+
+    // KMK -->
+    /**
+     * Sync is awaited by its worker. SQL changes share one transaction and exceptions/cancellation
+     * propagate, unlike a best-effort file import. Preferences follow SQL work; a caller may keep
+     * an outer transaction open to capture the resulting snapshot before committing.
+     */
+    suspend fun restoreSync(
+        backup: Backup,
+        options: RestoreOptions,
+        onProgress: suspend (Float) -> Unit = {},
+        onStage: (String) -> Unit = {},
+        beforeRestore: suspend () -> Unit,
+    ) {
+        suspend fun stage(name: String, restore: suspend () -> Unit) {
+            onStage("$name begin")
+            val started = System.nanoTime()
+            try {
+                restore()
+            } finally {
+                onStage("$name durationMs=${(System.nanoTime() - started) / 1_000_000}")
+            }
+        }
+        handler.await(inTransaction = true) {
+            beforeRestore()
+            if (options.categories) stage("categories") { categoriesRestorer(backup.backupCategories) }
+            if (options.savedSearchesFeeds) {
+                stage("searches-feeds") {
+                    savedSearchRestorer.restoreSavedSearches(backup.backupSavedSearches)
+                    feedRestorer.restoreFeeds(backup.backupFeeds)
+                }
+            }
+            if (options.extensionStores) {
+                stage("extension-stores") {
+                    backup.backupExtensionStores.forEach { extensionStoreRestorer(it) }
+                }
+            }
+            if (options.libraryEntries) {
+                stage("library") {
+                    val categories = backup.backupCategories.takeIf { options.categories }.orEmpty()
+                    val syncMangaRestorer = syncMangaRestorerFactory()
+                    syncMangaRestorer.sortByNew(backup.backupManga).forEachIndexed { index, manga ->
+                        currentCoroutineContext().ensureActive()
+                        syncMangaRestorer.restore(manga, categories)
+                        onProgress((index + 1f) / (backup.backupManga.size + 1f))
+                    }
+                }
+            }
+            currentCoroutineContext().ensureActive()
+        }
+        if (options.appSettings) {
+            stage("app-settings") {
+                preferenceRestorer.restoreApp(
+                    backup.backupPreferences,
+                    backup.backupCategories.takeIf { options.categories },
+                    strict = true,
+                )
+            }
+        }
+        if (options.sourceSettings) {
+            stage("source-settings") {
+                preferenceRestorer.restoreSource(backup.backupSourcePreferences, strict = true)
+            }
+        }
+        onProgress(1f)
+    }
+    // KMK <--
 
     suspend fun restore(uri: Uri, options: RestoreOptions) {
         val startTime = System.currentTimeMillis()

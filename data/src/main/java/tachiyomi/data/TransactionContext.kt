@@ -45,9 +45,18 @@ internal suspend fun <T> AndroidDatabaseHandler.withTransaction(block: suspend (
     return withContext(transactionContext) {
         val transactionElement = coroutineContext[TransactionElement]!!
         transactionElement.acquire()
+        // KMK -->
+        // A nested call's transactionContext is only the dispatcher. Preserve the inherited
+        // transaction element, thread local and parent Job across the suspending bridge too.
+        // Otherwise deeper transactions acquire another thread and wait on our own write lock,
+        // and cancellation cannot reach a suspended nested restore.
+        val inheritedContext = coroutineContext
+        // KMK <--
         try {
             db.transactionWithResult {
-                runBlocking(transactionContext) {
+                // KMK -->
+                runBlocking(inheritedContext) {
+                    // KMK <--
                     block()
                 }
             }

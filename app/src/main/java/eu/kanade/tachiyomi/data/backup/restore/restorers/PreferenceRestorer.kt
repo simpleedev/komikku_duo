@@ -35,11 +35,17 @@ class PreferenceRestorer(
     suspend fun restoreApp(
         preferences: List<BackupPreference>,
         backupCategories: List<BackupCategory>?,
+        // KMK -->
+        strict: Boolean = false,
+        // KMK <--
     ) {
         restorePreferences(
             preferences,
             preferenceStore,
             backupCategories,
+            // KMK -->
+            strict,
+            // KMK <--
         )
 
         LibraryUpdateJob.setupTask(context)
@@ -49,10 +55,14 @@ class PreferenceRestorer(
         // KMK <--
     }
 
-    suspend fun restoreSource(preferences: List<BackupSourcePreferences>) {
+    // KMK -->
+    suspend fun restoreSource(preferences: List<BackupSourcePreferences>, strict: Boolean = false) {
+        // KMK <--
         preferences.forEach {
             val sourcePrefs = AndroidPreferenceStore(context, sourcePreferences(it.sourceKey))
-            restorePreferences(it.prefs, sourcePrefs)
+            // KMK -->
+            restorePreferences(it.prefs, sourcePrefs, strict = strict)
+            // KMK <--
         }
     }
 
@@ -60,6 +70,9 @@ class PreferenceRestorer(
         toRestore: List<BackupPreference>,
         preferenceStore: PreferenceStore,
         backupCategories: List<BackupCategory>? = null,
+        // KMK -->
+        strict: Boolean = false,
+        // KMK <--
     ) {
         val allCategories = if (backupCategories != null) getCategories.await() else emptyList()
         val categoriesByName = allCategories.associateBy { it.name }
@@ -128,6 +141,7 @@ class PreferenceRestorer(
                 }
             } catch (e: Exception) {
                 // KMK -->
+                if (strict) throw e
                 xLogE("Failed to restore preference <$key>", e)
                 // KMK <--
             }
