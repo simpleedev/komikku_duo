@@ -5,11 +5,16 @@ import eu.kanade.tachiyomi.data.backup.models.Backup
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.protobuf.ProtoNumber
 import java.io.IOException
 
 /** The checkpoint is private, endpoint/options scoped, and written only after local application succeeds. */
 @Serializable
-data class WebDavSyncCheckpoint(val local: Backup, val remote: Backup, val etag: String?)
+data class WebDavSyncCheckpoint(
+    @ProtoNumber(1) val local: Backup,
+    @ProtoNumber(2) val remote: Backup,
+    @ProtoNumber(3) val etag: String? = null,
+)
 
 sealed interface WebDavRemote {
     data object Missing : WebDavRemote
@@ -22,7 +27,7 @@ interface WebDavTransport {
     suspend fun write(backup: Backup, previous: WebDavRemote): String?
 }
 
-class WebDavConflictException : IOException("Concurrent WebDAV changes")
+class WebDavConflictException(val field: String? = null) : IOException("Concurrent WebDAV changes")
 class WebDavUnsafeWriteException : IOException("WebDAV has no strong ETag for a safe update")
 
 /** No Android dependencies: exercises the same decisions and failure boundaries in unit tests. */
@@ -48,10 +53,11 @@ class WebDavSyncEngine(
             is WebDavRemote.Found -> previous.backup
         }
         val localChanged = checkpoint == null || localRevision != merger.revision(checkpoint.local)
-        val remoteChanged = remote == null || checkpoint == null ||
-            merger.revision(remote) != merger.revision(checkpoint.remote)
+        val remoteRevision = remote?.let(merger::revision)
+        val remoteChanged = previous != WebDavRemote.Unchanged &&
+            (remote == null || checkpoint == null || remoteRevision != merger.revision(checkpoint.remote))
         log(
-            "local=$localRevision remote=${remote?.let(merger::revision)} localChanged=$localChanged " +
+            "local=$localRevision remote=$remoteRevision localChanged=$localChanged " +
                 "remoteChanged=$remoteChanged metadata=${previous::class.simpleName}",
         )
 
@@ -70,8 +76,9 @@ class WebDavSyncEngine(
             stage("recovery") { protect(local, remote) }
             stage("merge") { merger.merge(local, remote, checkpoint) }
         }
-        val upload = remote == null || merger.revision(merged) != merger.revision(remote)
-        val needsRestore = merger.revision(merger.forRestore(merged)) != merger.revision(local)
+        val upload = remote == null || merger.revision(merged) != remoteRevision
+        val toRestore = merger.forRestore(merged)
+        val needsRestore = merger.revision(toRestore) != localRevision
         log("decision upload=$upload restore=$needsRestore")
         val etag = if (upload) {
             val expected = if (previous == WebDavRemote.Unchanged) {
@@ -84,7 +91,7 @@ class WebDavSyncEngine(
             if (previous is WebDavRemote.Found) previous.etag else checkpoint?.etag
         }
         currentCoroutineContext().ensureActive()
-        val applied = if (needsRestore) stage("restore") { restore(merger.forRestore(merged)) } else local
+        val applied = if (needsRestore) stage("restore") { restore(toRestore) } else local
         currentCoroutineContext().ensureActive()
         commit(WebDavSyncCheckpoint(applied, merged, etag?.takeIf(::isStrongEtag)))
         log("complete durationMs=${(System.nanoTime() - started) / 1_000_000}")

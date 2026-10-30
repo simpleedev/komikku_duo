@@ -122,9 +122,9 @@ fun AppStateBanners(
                                     percentFormatter.format(it),
                                 )
                             } ?: stringResource(MR.strings.updating_library)
-                            syncing -> progress?.let {
-                                stringResource(MR.strings.syncing_library) + " (${percentFormatter.format(it)})"
-                            } ?: stringResource(MR.strings.syncing_library)
+                            // WebDAV checking/merging has no measurable completion fraction.
+                            // Its notification is already indeterminate; do not display a fake 0%.
+                            syncing -> stringResource(MR.strings.syncing_library)
                             restoring -> progress?.let {
                                 stringResource(MR.strings.restoring_backup) + " (${percentFormatter.format(it)})"
                             } ?: stringResource(MR.strings.restoring_backup)

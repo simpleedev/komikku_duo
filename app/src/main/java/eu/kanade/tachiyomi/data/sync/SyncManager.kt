@@ -131,7 +131,8 @@ class SyncManager(
             val backup = handler.await(inTransaction = true) { createSyncBackup(backupOptions) }
             xLogD("WebDAV stage=snapshot durationMs=%s", (System.nanoTime() - snapshotStarted) / 1_000_000)
             val merger = WebDavSyncMerger(syncOptions)
-            xLogD("WebDAV snapshot revision=%s", merger.revision(backup))
+            val snapshotRevision = merger.revision(backup)
+            xLogD("WebDAV snapshot revision=%s", snapshotRevision)
             WebDavSyncService(context, json, syncPreferences, notifier).synchronize(backup) { merged ->
                 val status = Injekt.get<BackupRestoreStatus>()
                 try {
@@ -149,7 +150,7 @@ class SyncManager(
                             onProgress = status::updateProgress,
                             onStage = { xLogD("WebDAV restore stage=%s", it) },
                             beforeRestore = {
-                                check(merger.revision(createSyncBackup(backupOptions)) == merger.revision(backup)) {
+                                check(merger.revision(createSyncBackup(backupOptions)) == snapshotRevision) {
                                     "Local data changed while synchronizing; retry required"
                                 }
                                 Injekt.get<SyncStatus>().stop()

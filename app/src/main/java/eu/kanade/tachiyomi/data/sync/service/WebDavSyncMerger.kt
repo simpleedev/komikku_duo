@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.sync.service
 // KMK -->
 import eu.kanade.domain.sync.models.SyncSettings
 import eu.kanade.tachiyomi.data.backup.models.Backup
+import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -26,7 +27,9 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
     private val json = Json { encodeDefaults = true }
 
     fun revision(backup: Backup): String {
-        val value = tree(backup)
+        // Keep at most one series' chapter/history trees live. A whole-library JSON tree,
+        // its canonical copy and sort keys can exceed the Android heap during normal sync.
+        val value = header(backup)
         val categories = array(value["backupCategories"])
         val nameById = categories.associate {
             it.jsonObject.getValue("id").jsonPrimitive.content to it.jsonObject.getValue("name")
@@ -36,29 +39,32 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
         semantic["backupCategories"] = JsonArray(categories.map { JsonObject(it.jsonObject - "id") })
         semantic["backupPreferences"] = remapCategoryPreferences(value["backupPreferences"], nameById)
         semantic["backupManga"] = JsonArray(
-            array(value["backupManga"]).map {
-                JsonObject(
-                    it.jsonObject + (
+            backup.backupManga.map { manga ->
+                val item = json.encodeToJsonElement(BackupManga.serializer(), manga).jsonObject
+                val normalized = JsonObject(
+                    item + (
                         "categories" to JsonArray(
-                            array(it.jsonObject["categories"]).map { order ->
+                            array(item["categories"]).map { order ->
                                 nameByOrder[order] ?: order
                             },
                         )
                         ),
                 )
+                JsonPrimitive(digest(canonical(normalized).toString()))
             },
         )
         return digest(canonical(JsonObject(semantic)).toString())
     }
 
-    fun forUpload(backup: Backup): Backup = decode(tree(backup))
+    fun forUpload(backup: Backup): Backup = backup.copy(
+        backupPreferences = backup.backupPreferences.filterNot { isDevicePreference(it.key) },
+    )
 
     fun forRestore(backup: Backup): Backup {
-        val value = tree(backup).toMutableMap()
+        val value = header(backup).toMutableMap()
         fun exclude(key: String, enabled: Boolean) {
             if (!enabled) value[key] = JsonArray(emptyList())
         }
-        exclude("backupManga", settings.libraryEntries)
         exclude("backupCategories", settings.categories)
         exclude("backupSources", settings.libraryEntries)
         exclude("backupPreferences", settings.appSettings)
@@ -66,19 +72,6 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
         exclude("backupExtensionStores", settings.extensionStores)
         exclude("backupSavedSearches", settings.savedSearchesFeeds)
         exclude("backupFeeds", settings.savedSearchesFeeds)
-        value["backupManga"] = JsonArray(
-            array(value["backupManga"]).map { element ->
-                JsonObject(
-                    element.jsonObject.toMutableMap().apply {
-                        if (!settings.chapters) put("chapters", JsonArray(emptyList()))
-                        if (!settings.categories) put("categories", JsonArray(emptyList()))
-                        if (!settings.tracking) put("tracking", JsonArray(emptyList()))
-                        if (!settings.history) put("history", JsonArray(emptyList()))
-                        if (!settings.customInfo) keys.filter { it.startsWith("custom") }.toList().forEach(::remove)
-                    },
-                )
-            },
-        )
         if (!settings.privateSettings) {
             value["backupPreferences"] = JsonArray(
                 array(value["backupPreferences"]).filter {
@@ -99,14 +92,34 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
                 },
             )
         }
-        return decode(JsonObject(value))
+        return decode(JsonObject(value)).copy(
+            backupManga = if (settings.libraryEntries) {
+                backup.backupManga.map { manga ->
+                    if (settings.chapters && settings.categories && settings.tracking && settings.history && settings.customInfo) {
+                        manga
+                    } else {
+                        // Only clone records whose selected sections need filtering; never mutate the
+                        // remote snapshot held by the checkpoint or its private recovery copy.
+                        val record = json.encodeToJsonElement(BackupManga.serializer(), manga).jsonObject.toMutableMap()
+                        if (!settings.chapters) record["chapters"] = JsonArray(emptyList())
+                        if (!settings.categories) record["categories"] = JsonArray(emptyList())
+                        if (!settings.tracking) record["tracking"] = JsonArray(emptyList())
+                        if (!settings.history) record["history"] = JsonArray(emptyList())
+                        if (!settings.customInfo) record.keys.filter { it.startsWith("custom") }.toList().forEach(record::remove)
+                        json.decodeFromJsonElement(BackupManga.serializer(), JsonObject(record))
+                    }
+                }
+            } else {
+                emptyList()
+            },
+        )
     }
 
     fun merge(local: Backup, remote: Backup, checkpoint: WebDavSyncCheckpoint?): Backup {
-        val l = tree(local)
-        val r = tree(remote)
-        val bl = checkpoint?.local?.let(::tree)
-        val br = checkpoint?.remote?.let(::tree)
+        val l = header(local)
+        val r = header(remote)
+        val bl = checkpoint?.local?.let(::header)
+        val br = checkpoint?.remote?.let(::header)
         // Reconcile category order collisions by name, rather than assigning two names one order.
         var nextOrder = array(l["backupCategories"]).maxOfOrNull {
             it.jsonObject["order"]?.jsonPrimitive?.longOrNull ?: 0L
@@ -126,9 +139,6 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
         val idByName = categories.associate { it.jsonObject["name"] to it.jsonObject.getValue("id") }
         fun remap(value: JsonObject?): JsonObject? {
             if (value == null) return null
-            val nameByOrder = array(value["backupCategories"]).associate {
-                it.jsonObject["order"] to it.jsonObject["name"]
-            }
             val nameById = array(value["backupCategories"]).associate {
                 it.jsonObject.getValue("id").jsonPrimitive.content to it.jsonObject.getValue("name")
             }
@@ -148,19 +158,6 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
                         },
                     ),
                     "backupPreferences" to remapCategoryPreferences(value["backupPreferences"], ids),
-                    "backupManga" to JsonArray(
-                        array(value["backupManga"]).map {
-                            JsonObject(
-                                it.jsonObject + (
-                                    "categories" to JsonArray(
-                                        array(it.jsonObject["categories"]).mapNotNull {
-                                            orderByName[nameByOrder[it]]
-                                        },
-                                    )
-                                    ),
-                            )
-                        },
-                    ),
                 ),
             )
         }
@@ -185,7 +182,36 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
         // Retain legacy device-control entries already on the server, but never import them.
         val controls = remote.backupPreferences.filter { isDevicePreference(it.key) }
         val mergedBackup = decode(JsonObject(merged))
-        return mergedBackup.copy(backupPreferences = mergedBackup.backupPreferences + controls)
+        fun index(backup: Backup?) = backup?.backupManga.orEmpty().associateBy { it.source to it.url }
+        val localManga = index(local)
+        val remoteManga = index(remote)
+        val baseLocalManga = index(checkpoint?.local)
+        val baseRemoteManga = index(checkpoint?.remote)
+        fun record(manga: BackupManga?, backup: Backup?): JsonObject? {
+            if (manga == null || backup == null) return null
+            val nameByOrder = backup.backupCategories.associate { JsonPrimitive(it.order) to JsonPrimitive(it.name) }
+            val value = json.encodeToJsonElement(BackupManga.serializer(), manga).jsonObject
+            return JsonObject(
+                value + ("categories" to JsonArray(array(value["categories"]).mapNotNull { orderByName[nameByOrder[it]] })),
+            )
+        }
+        val mangas = (localManga.keys + remoteManga.keys).map { key ->
+            val left = record(localManga[key], local)
+            val right = record(remoteManga[key], remote)
+            val value = when {
+                left == null -> right!!
+                right == null -> left
+                else -> mergeRecord(
+                    "backupManga",
+                    left,
+                    right,
+                    record(baseLocalManga[key], checkpoint?.local),
+                    record(baseRemoteManga[key], checkpoint?.remote),
+                )
+            }
+            json.decodeFromJsonElement(BackupManga.serializer(), value)
+        }
+        return mergedBackup.copy(backupManga = mangas, backupPreferences = mergedBackup.backupPreferences + controls)
     }
 
     private fun mergeList(
@@ -233,7 +259,7 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
             // edit can therefore publish read=false at the same version as our acknowledged
             // read=true. This is indistinguishable from an edit made with a stale counter;
             // preserve the Duo's state and both snapshots instead of silently rolling it back.
-            throw WebDavConflictException()
+            throw WebDavConflictException("chapters.reading-state")
         }
         val preferred = if (localVersion >= remoteVersion) local else remote
         val merged = (local.keys + remote.keys).associateWith { field ->
@@ -254,7 +280,7 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
                 baseLocal != null || baseRemote != null -> when {
                     same(l, bl) -> r ?: l ?: JsonNull
                     same(r, br) -> l ?: r ?: JsonNull
-                    else -> throw WebDavConflictException() // Preserve both sides; never guess at concurrent edits.
+                    else -> throw WebDavConflictException("$kind.$field") // Retain both sides rather than guessing.
                 }
                 kind == "chapters" && localVersion == remoteVersion && field in setOf("read", "bookmark") ->
                     JsonPrimitive(l?.jsonPrimitive?.booleanOrNull == true || r?.jsonPrimitive?.booleanOrNull == true)
@@ -273,8 +299,8 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
         return JsonObject(merged)
     }
 
-    private fun tree(backup: Backup): JsonObject {
-        val value = json.encodeToJsonElement(Backup.serializer(), backup).jsonObject.toMutableMap()
+    private fun header(backup: Backup): JsonObject {
+        val value = json.encodeToJsonElement(Backup.serializer(), backup.copy(backupManga = emptyList())).jsonObject.toMutableMap()
         value["backupPreferences"] = JsonArray(
             array(value["backupPreferences"]).filter {
                 val key = it.jsonObject.getValue("key").jsonPrimitive.content
@@ -285,7 +311,7 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
     }
 
     private fun decode(value: JsonObject) = json.decodeFromJsonElement(Backup.serializer(), value)
-    private fun same(a: JsonElement?, b: JsonElement?) = canonical(a ?: JsonNull) == canonical(b ?: JsonNull)
+    private fun same(a: JsonElement?, b: JsonElement?) = a == b || canonical(a ?: JsonNull) == canonical(b ?: JsonNull)
 
     private fun canonical(value: JsonElement): JsonElement = when (value) {
         is JsonObject -> JsonObject(
@@ -297,7 +323,9 @@ class WebDavSyncMerger(private val settings: SyncSettings = SyncSettings()) {
                                 (key == "value" && value["type"]?.jsonPrimitive?.content?.endsWith("StringSetPreferenceValue") == true)
                             )
                     ) {
-                        JsonArray(normalized.sortedBy { it.toString() })
+                        // Materialize a sort key once per item, rather than serializing entire
+                        // chapter/history records for every comparator invocation.
+                        JsonArray(normalized.map { it.toString() to it }.sortedBy { it.first }.map { it.second })
                     } else {
                         normalized
                     }

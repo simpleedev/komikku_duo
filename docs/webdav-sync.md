@@ -83,6 +83,74 @@ install the corrected APK over the existing build, and reopen it. Do not clear
 storage or uninstall. The stuck transaction must be released by ending the old
 process; hiding the banner does not release it.
 
+## Large-library follow-up: Syncing at 0%
+
+Later Duo logs showed `OutOfMemoryError` during JSON decoding and canonical
+collection sorting, at Android's 512 MiB app heap limit. Other attempts spent
+roughly two minutes constructing/comparing whole-library JSON trees before
+reporting a conflict. These attempts were merging rather than restoring. The
+Syncing banner displayed 0% because no measurable fraction was supplied.
+
+Revision calculation now hashes one series at a time and canonicalizes the small
+header plus sorted series fingerprints. Merging retains typed snapshots and
+materializes JSON for one series and its ancestors at a time. Sort keys are
+created once per item, rather than serializing records repeatedly inside sort
+comparisons. Upload/restore filtering also avoids whole-library JSON cloning.
+Transient tree memory is bounded by the largest individual series, rather than
+the entire library. The full typed snapshots still occupy memory; this is not
+an unlimited-size streaming backup protocol.
+
+Local checkpoints now use `checkpoint.proto`. Existing `checkpoint.json` files
+are read through a stream and migrated atomically after successful synchronization,
+including a successful 304 no-op, without discarding acknowledged ancestry. The
+legacy file remains intact. Revision values change with the new hashing layout,
+but both checkpoint snapshots and current snapshots are compared using the new
+algorithm, so no baseline reset or remote format migration is needed. The shared
+WebDAV file remains the original `backup.proto`.
+
+Syncing is now indeterminate in the banner, matching its existing notification;
+actual restoration still reports its progress. Conflict diagnostics report only
+the model field involved, without record names or preference values. Genuine
+conflicts still preserve both sides and stop safely; the memory fix does not
+select an arbitrary winner to make a conflict disappear.
+
+`WebDavMemoryTest` exercises four independent snapshots totaling 60,000 chapters
+per snapshot, merges independent offline edits, checks revision order invariance,
+and round-trips old JSON ancestry into the binary checkpoint, including missing
+ETags. All three tests passed in a JVM constrained to **256 MiB**; the synthetic
+large-library test completed in about two seconds on the development host. This
+is a host regression test, not a timing claim for the Duo.
+
+A separately authorized local replay of the Duo's recovery snapshots and ancestry
+also ran within 256 MiB. It identified one genuine competing backwards page seek;
+an in-memory simulation of the user's selected Duo position allowed the complete
+merge to succeed. This is separate from the memory failure. Private snapshots
+and the temporary replay harness are not part of the committed regression suite.
+The replay itself did not modify the phone or WebDAV, and does not establish
+that a live sync has completed.
+
+With the user's explicit approval, the tested `1.14.1-5` debug APK was then
+installed over the existing Duo app. The single chapter's competing remote
+ancestor page was acknowledged in the private checkpoint, with its ETag cleared
+to force a fresh server read. Structural validation confirmed that every other
+checkpoint field was preserved. The original checkpoint remains in app-private
+storage for recovery; neither the local database nor the shared backup was
+manually replaced.
+
+The next normal live synchronization completed its download, merge, conditional
+upload and awaited restoration, then saved a binary checkpoint. In-memory
+inspection verified that both acknowledged snapshots retained the selected Duo
+page and all series present in either recovery snapshot. Five subsequent process
+reopens each reported `metadata=Unchanged`, `localChanged=false`,
+`remoteChanged=false`, and `decision=no-op restore=false`, with no merge, upload,
+or restoration. This verifies the five-open acceptance case on the Duo; the
+other original Komikku installations still need their separate exchange checks.
+
+After this follow-up, `spotlessApply`, `spotlessCheck`, and `assembleDebug` passed.
+The complete app suite reported **150 tests: 149 passed, one existing disabled
+test skipped, zero failures**. All **53 sync tests** passed, including the three
+new memory/checkpoint cases.
+
 ## How the new path works
 
 1. A shared coroutine coordinator covers sync and file restoration. Immediate
@@ -352,6 +420,7 @@ Or install the universal APK to a chosen connected test device:
 | File (paths relative to repository) | Change |
 |---|---|
 | `app/src/main/java/eu/kanade/tachiyomi/App.kt` | Label startup/resume triggers in diagnostics. |
+| `app/src/main/java/eu/kanade/presentation/components/Banners.kt` | Show indeterminate syncing without a misleading 0% label. |
 | `app/src/main/java/eu/kanade/tachiyomi/data/sync/SyncCoordinator.kt` | Shared sync/restore execution lock and coalescing. |
 | `app/src/main/java/eu/kanade/tachiyomi/data/sync/SyncDataJob.kt` | One immediate-work identity, trigger logs, cancellation/failure handling. |
 | `app/src/main/java/eu/kanade/tachiyomi/data/library/LibraryUpdateJob.kt` | Tag chained sync correctly and allow local library refresh after reported sync errors. |
@@ -368,6 +437,7 @@ Or install the universal APK to a chosen connected test device:
 | `i18n-kmk/src/commonMain/moko-resources/base/strings.xml` | Localizable WebDAV conflict, failure, and unsafe-server messages. |
 | `app/src/test/java/eu/kanade/tachiyomi/data/sync/WebDavSyncTest.kt` | Sync/merge/no-op/data-safety regression tests. |
 | `app/src/test/java/eu/kanade/tachiyomi/data/sync/WebDavTransportTest.kt` | HTTP protocol regression tests. |
+| `app/src/test/java/eu/kanade/tachiyomi/data/sync/WebDavMemoryTest.kt` | Large-library merge/revision regression and checkpoint migration/nullable ETag tests. |
 | `app/src/test/java/eu/kanade/tachiyomi/data/sync/WebDavRestoreTest.kt` | Restore transaction contract/failure/cancellation regression. |
 | `app/src/test/java/eu/kanade/tachiyomi/data/sync/WebDavDatabaseTransactionTest.kt` | Real handler/transacter nesting, progress, rollback, cancellation and recovery regressions. |
 | `app/src/test/java/eu/kanade/tachiyomi/data/sync/SyncDataJobTest.kt` | Chained library-update failure policy, failure output and work tags. |

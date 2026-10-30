@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.network.await
 import exh.log.xLogD
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.protobuf.ProtoBuf
 import okhttp3.Credentials
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -20,6 +21,7 @@ import tachiyomi.i18n.kmk.KMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.io.FileNotFoundException
 import java.util.concurrent.TimeUnit
 
 class WebDavSyncService(
@@ -45,7 +47,8 @@ class WebDavSyncService(
     // Scope validators and baselines to the account, endpoint and selected sections.
     private val scope = WebDavSyncMerger.digest("$url|${syncPreferences.webDavUsername().get()}|$settings")
     private val directory = File(context.noBackupFilesDir, "webdav-sync/$scope").apply { mkdirs() }
-    private val checkpointFile = AtomicFile(File(directory, "checkpoint.json"))
+    private val checkpointFile = AtomicFile(File(directory, "checkpoint.proto"))
+    private val legacyCheckpointFile = AtomicFile(File(directory, "checkpoint.json"))
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -59,12 +62,24 @@ class WebDavSyncService(
 
     suspend fun synchronize(local: Backup, restore: suspend (Backup) -> Backup) {
         var remoteBefore: Backup? = null
+        var legacyCheckpointLoaded = false
+        val checkpointStarted = System.nanoTime()
         val checkpoint = try {
-            json.decodeFromString(WebDavSyncCheckpoint.serializer(), checkpointFile.readFully().decodeToString())
+            try {
+                protoBuf.decodeFromByteArray(WebDavSyncCheckpoint.serializer(), checkpointFile.readFully())
+            } catch (_: FileNotFoundException) {
+                // Migrate existing ancestry without holding a full JSON byte array and String.
+                // Keep the legacy file intact; the next successful sync atomically writes binary.
+                legacyCheckpointFile.openRead().use {
+                    json.decodeFromStream(WebDavSyncCheckpoint.serializer(), it)
+                }.also { legacyCheckpointLoaded = true }
+            }
         } catch (e: Exception) {
             // A missing/old/damaged checkpoint only disables the optimization, never deletes data.
             xLogD("WebDAV checkpoint unavailable (%s); reading remote", e.javaClass.simpleName)
             null
+        } finally {
+            xLogD("WebDAV stage=checkpoint durationMs=%s", (System.nanoTime() - checkpointStarted) / 1_000_000)
         }
         try {
             repeat(3) { attempt ->
@@ -85,9 +100,15 @@ class WebDavSyncService(
                             }
                         },
                         commit = {
-                            atomicWrite(checkpointFile, json.encodeToString(WebDavSyncCheckpoint.serializer(), it).toByteArray())
+                            atomicWrite(checkpointFile, protoBuf.encodeToByteArray(WebDavSyncCheckpoint.serializer(), it))
+                            legacyCheckpointLoaded = false
                         },
                     )
+                    // A 304 no-op does not invoke the engine's commit callback. Its acknowledged
+                    // ancestry is still safe to migrate, avoiding a large JSON parse next launch.
+                    if (legacyCheckpointLoaded && checkpoint != null) {
+                        atomicWrite(checkpointFile, protoBuf.encodeToByteArray(WebDavSyncCheckpoint.serializer(), checkpoint))
+                    }
                     syncPreferences.lastSyncTimestamp().set(System.currentTimeMillis())
                     return
                 } catch (e: WebDavPreconditionException) {
@@ -104,6 +125,7 @@ class WebDavSyncService(
             }
             // Server bodies, URLs and throwable messages can contain credentials or user content.
             xLogD("WebDAV failed type=%s", e.javaClass.simpleName)
+            if (e is WebDavConflictException) xLogD("WebDAV conflict field=%s", e.field ?: "unknown")
             val message = when (e) {
                 is WebDavUnsafeWriteException -> KMR.strings.webdav_sync_unsafe_server
                 is WebDavConflictException, is WebDavPreconditionException -> KMR.strings.webdav_sync_conflict
